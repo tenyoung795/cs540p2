@@ -29,8 +29,8 @@ public:
 
 private:
     template <typename T, typename Iter>
-    Node(T &&v, std::size_t h, UniquePtr &&n, Node *p, Iter iter)
-        : value{std::forward<T>(v)}, height{h}, next{std::move(n)}, prev{p} {
+    Node(T &&v, std::size_t h, Node *p, UniquePtr &&n, Iter iter)
+        : value{std::forward<T>(v)}, height{h}, prev{p}, next{std::move(n)} {
         for (std::size_t i = 0; i < height; ++i) {
             Link &link = levels()[i];
             auto prev = *iter;
@@ -56,17 +56,17 @@ public:
 
     V value;
     const std::size_t height;
-    UniquePtr next;
     Node *prev;
+    UniquePtr next;
     // Link levels[height];
 
     template <typename T, typename Iter>
-    static UniquePtr make(T &&value, std::size_t height, UniquePtr &&next, Node *prev,
+    static UniquePtr make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
                           Iter iter) {
         auto size = sizeof(Node) + height * sizeof(Link);
         auto ptr = new char[size];
         UniquePtr result{
-            new(ptr) Node{std::forward<T>(value), height, std::move(next), prev, iter}
+            new(ptr) Node{std::forward<T>(value), height, prev, std::move(next), iter}
         };
         if (prev) {
             prev->next = std::move(result);
@@ -303,7 +303,7 @@ private:
         auto prev = std::move(iter).prev();
         auto &next = prev ? prev->next : _head;
         auto result = Node<ValueType>::make(
-            std::forward<V>(value), height, std::move(next), prev,
+            std::forward<V>(value), height, prev, std::move(next),
             _levels.begin());
         ++_size;
 
