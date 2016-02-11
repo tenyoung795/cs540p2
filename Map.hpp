@@ -7,6 +7,7 @@
 #include <array>
 #include <iterator>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -31,12 +32,13 @@ private:
     Node(T &&v, std::size_t h, UniquePtr &&n, Node *p, Iter iter)
         : value{std::forward<T>(v)}, height{h}, next{std::move(n)}, prev{p} {
         for (std::size_t i = 0; i < height; ++i) {
-            Link &link = *new(&level(i)) auto(*iter);
-            if (link.prev) {
-                link.prev->level(i).next = this;
-            }
-            if (link.next) {
-                link.next->level(i).prev = this;
+            Link &link = levels()[i];
+            auto prev = *iter;
+            auto next = prev ? prev->levels()[i].next : nullptr;
+            link = {prev, next};
+            (prev ? prev->levels()[i].next : *iter) = this;
+            if (next) {
+                next->levels()[i].prev = this;
             }
             ++iter;
         }
@@ -48,8 +50,8 @@ private:
 
 public:
     struct Link {
-        Node *next;
         Node *prev;
+        Node *next;
     };
 
     V value;
@@ -72,14 +74,14 @@ public:
         return result;
     }
 
-    Link &level(std::size_t i) {
-        return *reinterpret_cast<Link *>(
-            reinterpret_cast<char *>(this) + sizeof(*this) + i * sizeof(Link));
+    Link *levels() {
+        return reinterpret_cast<Link *>(
+            reinterpret_cast<char *>(this) + sizeof(*this));
     }
 
-    const Link &level(std::size_t i) const {
-        return *reinterpret_cast<const Link *>(
-            reinterpret_cast<const char *>(this) + sizeof(*this) + i * sizeof(Link));
+    const Link *levels() const {
+        return reinterpret_cast<const Link *>(
+            reinterpret_cast<const char *>(this) + sizeof(*this));
     }
 };
 
@@ -256,6 +258,8 @@ private:
     std::array<Node<ValueType> *, MAX_HEIGHT> _levels;
     Node<ValueType> *_last;
     std::size_t _size;
+    std::size_t _height;
+    std::default_random_engine _random;
 
     Iterator _begin() const {
         return Iterator {_head.get()};
@@ -291,14 +295,16 @@ private:
 
     template <typename V>
     Iterator _insert_before(Iterator iter, V &&value) {
-        std::array<typename Node<ValueType>::Link, MAX_HEIGHT> levels;
-        // TODO: Determine the levels
+        std::size_t height = 0;
+        std::bernoulli_distribution flip_coin;
+        for (; height < MAX_HEIGHT && flip_coin(_random); ++height);
+        _height = std::max(_height, height);
 
         auto prev = std::move(iter).prev();
         auto &next = prev ? prev->next : _head;
         auto result = Node<ValueType>::make(
-            std::forward<V>(value), 0, std::move(next), prev,
-            levels.begin());
+            std::forward<V>(value), height, std::move(next), prev,
+            _levels.begin());
         ++_size;
 
         if (prev) {
@@ -347,15 +353,19 @@ private:
     }
 
 public:
-    Map() : _head{}, _levels{}, _last{}, _size{} {}
+    Map() :
+        _head{}, _levels{},
+        _last{}, _size{}, _height{},
+        _random{std::random_device {}()} {}
 
     Map(const Map &that) : Map{} {
         insert(that.begin(), that.end());
     }
 
     Map(Map &&that)
-        : _head{std::move(that._head)}, _levels{that._levels}, _last{that._last},
-          _size{that._size} {
+        : _head{std::move(that._head)}, _levels{that._levels},
+          _last{that._last}, _size{that._size}, _height{that._height},
+          _random{that._random} {
         that.clear();
     }
 
@@ -373,9 +383,11 @@ public:
 
     Map &operator=(Map &&that) {
         _head = std::move(that._head);
-        _levels = std::move(that._levels);
-        _last = std::move(that._last);
-        _size = std::move(that._size);
+        _levels = that._levels;
+        _last = that._last;
+        _size = that._size;
+        _height = that._height;
+        _random = that._random;
         that.clear();
         return *this;
     }
@@ -455,14 +467,17 @@ public:
 
     void erase(Iterator iter) {
         auto node = std::move(iter).node();
+        auto levels = node->levels();
         for (std::size_t i = 0; i < node->height; ++i) {
-            auto &l = node->level(i);
+            auto &l = levels[i];
             if (l.next) {
-                l.next->level(i).prev = l.prev;
+                l.next->levels()[i].prev = l.prev;
             }
-            if (l.prev) {
-                l.prev->level(i).next = l.next;
-            }
+            (l.prev ? l.prev->levels()[i].next : _levels[i]) = l.next;
+        }
+        if (node->height == _height) {
+            // We may have decreased the height
+            for (; _height > 0 && !_levels[_height - 1]; --_height);
         }
         (node->next ? node->next->prev : _last) = node->prev;
         (node->prev ? node->prev->next : _head) = std::move(node->next);
