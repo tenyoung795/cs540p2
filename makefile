@@ -1,5 +1,5 @@
-CXXFLAGS ?= -O3 -Wfatal-errors
-CXXFLAGS += -std=c++14 -Wall -Wextra -pedantic -Werror
+CXXFLAGS ?= -O3
+CXXFLAGS += -std=c++14 -Wall -Wextra -pedantic -Werror -Wfatal-errors
 TARGETS := test-kec test minimal morseex test-scaling
 
 all: $(TARGETS)
