@@ -252,7 +252,7 @@ public:
     using ReverseIterator = std::reverse_iterator<Iterator>;
 
 private:
-    static constexpr auto MAX_HEIGHT = 32;
+    static constexpr auto MAX_HEIGHT = 31;
 
     typename Node<ValueType>::UniquePtr _head;
     std::array<Node<ValueType> *, MAX_HEIGHT> _level_heads;
