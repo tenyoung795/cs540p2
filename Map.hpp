@@ -278,15 +278,19 @@ private:
 
     template <typename This>
     static auto _lower_bound(This &&self, const K &key) {
+        if (self.empty() || self._last->value.first < key) {
+            return std::make_pair(self.end(), false);
+        }
+
         Node<ValueType> *ptr = nullptr;
         for (auto i = self._height; i > 0; --i) {
             while (true) {
                 auto next = ptr ? ptr->levels()[i - 1].next : self._level_heads[i - 1];
-                if (!(next && next->value.first < key)) break;
+                if (!next || key < next->value.first) break;
+                if (next->value.first == key) {
+                    return std::make_pair(decltype(self.begin()) {Iterator {next}}, true);
+                }
                 ptr = next;
-            }
-            if (ptr && ptr->value.first == key) {
-                return std::make_pair(decltype(self.begin()) {Iterator {ptr}}, true);
             }
         }
         auto begin = ptr ? Iterator { ptr } : self.begin();
