@@ -6,268 +6,163 @@
 #include <algorithm>
 #include <array>
 #include <iterator>
+#include <list>
 #include <memory>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace cs540 {
 namespace {
+constexpr std::size_t MAX_HEIGHT = 32;
+
+template <typename>
+struct Node;
+
 template <typename V>
-class Node {
-    struct _Deleter {
-        void operator()(Node *node) const {
-            node->~Node();
-            delete[] reinterpret_cast<char *>(node);
-        }
-    };
+using NodeIterator = typename std::list<Node<V>>::iterator;
 
-public:
-    using UniquePtr = std::unique_ptr<Node, _Deleter>;
-
-private:
-    template <typename T, typename Iter>
-    Node(T &&v, std::size_t h, Node *p, UniquePtr &&n, Iter iter)
-        : value{std::forward<T>(v)}, height{h}, prev{p}, next{std::move(n)} {
-        for (std::size_t i = 0; i < height; ++i) {
-            Link &link = levels()[i];
-            auto prev = *iter;
-            auto next = prev ? prev->levels()[i].next : nullptr;
-            link = {prev, next};
-            (prev ? prev->levels()[i].next : *iter) = this;
-            if (next) {
-                next->levels()[i].prev = this;
-            }
-            ++iter;
-        }
-        if (next) {
-            next->prev = this;
-        }
-        // Caller (i.e. Node<V>::make) must connect prev properly
-    }
-
-public:
+template <typename V>
+struct Node {
     struct Link {
-        Node *prev;
-        Node *next;
+        NodeIterator<V> prev;
+        NodeIterator<V> next;
     };
 
     V value;
-    const std::size_t height;
-    Node *prev;
-    UniquePtr next;
-    // Link levels[height];
-
-    template <typename T, typename Iter>
-    static UniquePtr make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
-                          Iter iter) {
-        auto size = sizeof(Node) + height * sizeof(Link);
-        auto ptr = new char[size];
-        UniquePtr result{
-            new(ptr) Node{std::forward<T>(value), height, prev, std::move(next), iter}
-        };
-        if (prev) {
-            prev->next = std::move(result);
-        }
-        return result;
-    }
-
-    Link *levels() {
-        return reinterpret_cast<Link *>(
-            reinterpret_cast<char *>(this) + sizeof(*this));
-    }
-
-    const Link *levels() const {
-        return reinterpret_cast<const Link *>(
-            reinterpret_cast<const char *>(this) + sizeof(*this));
-    }
-};
-
-constexpr struct {} construct_end{};
-
-template <typename V>
-class Iter : public std::iterator<std::bidirectional_iterator_tag, V> {
-    Node<V> *_prev;
-    Node<V> *_node;
-    Node<V> *_next;
+    std::size_t height;
+    std::array<Link, MAX_HEIGHT> levels;
 
     template <typename T>
-    friend bool operator==(const Iter<T> &, const Iter<T> &);
+    Node(T &&value, std::size_t height) : value{std::forward<T>(value)}, height{height} {}
+};
+
+template <typename I>
+class ValueIterator : public std::iterator<
+    std::bidirectional_iterator_tag,
+    decltype(std::declval<typename std::iterator_traits<I>::value_type>().value),
+    typename std::iterator_traits<I>::difference_type,
+    decltype(&typename std::iterator_traits<I>::pointer {}->value),
+    decltype((std::declval<typename std::iterator_traits<I>::reference>().value))
+> {
+    static_assert(std::is_base_of<
+        std::bidirectional_iterator_tag,
+        typename std::iterator_traits<I>::iterator_category
+    >::value, "I must be bidirectional");
+
+    I _iter;
+
+    template <typename I1, typename I2>
+    friend bool operator==(const ValueIterator<I1> &, const ValueIterator<I2> &);
 
 protected:
-    explicit Iter(Node<V> *node)
-        : _prev{node ? node->prev : nullptr},
-          _node{node},
-          _next{node ? node->next.get() : nullptr} {}
+    ValueIterator(const I &iter): _iter{iter} {}
 
-    explicit Iter(decltype(construct_end), Node<V> *last)
-        : _prev{last}, _node{nullptr}, _next{nullptr} {}
-
-    Node<V> *prev() && {
-        return _prev;
-    }
-
-    Node<V> *node() && {
-        return _node;
+    constexpr const I &get() const {
+        return _iter;
     }
 
     template <typename, typename>
     friend class Map;
 
 public:
-    Iter() = delete;
-    Iter(const Iter &) = default;
-    ~Iter() = default;
-    Iter &operator=(const Iter &) = default;
-
-    Iter &operator++() {
-        _prev = _node;
-        _node = _next;
-        _next = _next ? _next->next.get() : nullptr;
-        return *this;
-    }
-
-    Iter operator++(int) {
-        auto tmp = *this;
-        ++*this;
-        return tmp;
-    }
-
-    Iter &operator--() {
-        _next = _node;
-        _node = _prev;
-        _prev = _prev ? _prev->prev : nullptr;
-        return *this;
-    }
-
-    Iter operator--(int) {
-        auto tmp = *this;
-        --*this;
-        return tmp;
-    }
-
-    V &operator*() const {
-        return _node->value;
-    }
-
-    V *operator->() const {
-        return &**this;
-    }
-};
-
-template <typename V>
-class ConstIter : public std::iterator<std::bidirectional_iterator_tag, const V> {
-    Iter<V> _iter;
-
-    template <typename T>
-    friend bool operator==(const ConstIter<T> &, const ConstIter<T> &);
-
-public:
-    ConstIter() = delete;
-    ConstIter(const ConstIter &) = default;
-    ConstIter(const Iter<V> &iter) : _iter{iter} {}
-    ~ConstIter() = default;
-    ConstIter &operator=(const ConstIter &) = default;
-
-    ConstIter &operator++() {
+    ValueIterator &operator++() {
         ++_iter;
         return *this;
     }
 
-    ConstIter operator++(int) {
+    ValueIterator operator++(int) {
         auto tmp = *this;
         ++*this;
         return tmp;
     }
 
-    ConstIter &operator--() {
+    ValueIterator &operator--() {
         --_iter;
         return *this;
     }
 
-    ConstIter operator--(int) {
+    ValueIterator operator--(int) {
         auto tmp = *this;
         --*this;
         return tmp;
     }
 
-    const V &operator*() const {
-        return *_iter;
+    auto &operator*() const {
+        return _iter->value;
     }
 
-    const V *operator->() const {
+    auto *operator->() const {
         return &**this;
     }
 };
 
-template <typename V>
-bool operator==(const Iter<V> &i1, const Iter<V> &i2) {
-    return i1._node == i2._node;
-}
-
-template <typename V>
-bool operator==(const ConstIter<V> &i1, const ConstIter<V> &i2) {
+template <typename I1, typename I2>
+bool operator==(const ValueIterator<I1> &i1, const ValueIterator<I2> &i2) {
     return i1._iter == i2._iter;
 }
 
-template <typename V>
-bool operator==(const Iter<V> &i1, const ConstIter<V> &i2) {
-    return ConstIter<V>{i1} == i2;
-}
-
-template <typename V>
-bool operator==(const ConstIter<V> &i1, const Iter<V> &i2) {
-    return i2 == i1;
-}
-
-template <typename V>
-bool operator!=(const Iter<V> &i1, const Iter<V> &i2) {
+template <typename I1, typename I2>
+bool operator!=(const ValueIterator<I1> &i1, const ValueIterator<I2> &i2) {
     return !(i1 == i2);
 }
 
-template <typename V>
-bool operator!=(const ConstIter<V> &i1, const ConstIter<V> &i2) {
-    return !(i1 == i2);
-}
+// Wrapper around std::size_t that automatically zeros upon move.
+class Height {
+    std::size_t _value;
 
-template <typename V>
-bool operator!=(const Iter<V> &i1, const ConstIter<V> &i2) {
-    return !(i1 == i2);
-}
+public:
+    constexpr Height(): _value{} {}
 
-template <typename V>
-bool operator!=(const ConstIter<V> &i1, const Iter<V> &i2) {
-    return !(i1 == i2);
-}
+    constexpr Height(const Height &that): _value{that._value} {}
+
+    constexpr Height(Height &&that): _value{that} {
+        that._value = 0;
+    }
+
+    constexpr Height &operator=(const Height &that) {
+        if (this != &that) {
+            _value = that._value;
+        }
+        return *this;
+    }
+
+    constexpr Height &operator=(Height &&that) {
+        _value = that._value;
+        that._value = 0;
+        return *this;
+    }
+
+    constexpr operator const std::size_t &() const {
+        return _value;
+    }
+
+    constexpr operator std::size_t &() {
+        return _value;
+    }
+};
 } // anonymous namespace
 
 template <typename K, typename M>
 class Map {
 public:
     using ValueType = std::pair<const K, M>;
-    using Iterator = Iter<ValueType>;
-    using ConstIterator = ConstIter<ValueType>;
-    using ReverseIterator = std::reverse_iterator<Iterator>;
 
 private:
-    static constexpr auto MAX_HEIGHT = 32;
+    using _List = std::list<Node<ValueType>>;
 
-    typename Node<ValueType>::UniquePtr _head;
-    std::array<Node<ValueType> *, MAX_HEIGHT> _levels;
-    Node<ValueType> *_last;
-    std::size_t _size;
-    std::size_t _height;
+public:
+    using Iterator = ValueIterator<typename _List::iterator>;
+    using ConstIterator = ValueIterator<typename _List::const_iterator>;
+    using ReverseIterator = ValueIterator<typename _List::reverse_iterator>;
+
+private:
+    std::list<Node<ValueType>> _nodes;
+    Height _height;
     std::default_random_engine _random;
-
-    Iterator _begin() const {
-        return Iterator {_head.get()};
-    }
-
-    Iterator _end() const {
-        return Iterator {construct_end, _last};
-    }
 
     template <typename This>
     static auto _lower_bound(This &&self, const K &key) {
@@ -295,54 +190,34 @@ private:
 
     template <typename V>
     Iterator _insert_before(Iterator iter, V &&value) {
-        std::size_t height = 0;
+        Height height;
         std::bernoulli_distribution flip_coin;
         for (; height < MAX_HEIGHT && flip_coin(_random); ++height);
         _height = std::max(_height, height);
-
-        auto prev = std::move(iter).prev();
-        auto &next = prev ? prev->next : _head;
-        auto result = Node<ValueType>::make(
-            std::forward<V>(value), height, prev, std::move(next),
-            _levels.begin());
-        ++_size;
-
-        if (prev) {
-            auto &node = *prev->next;
-            if (!node.next) {
-                _last = &node;
-            }
-            return Iterator {&node};
-        }
-
-        // We've inserted the head
-        if (!_last) {
-            _last = &*result;
-        }
-        _head = std::move(result);
-        return begin();
+        return _nodes.emplace(iter.get(),
+                              std::forward<V>(value), height);
     }
 
     template <typename Key>
     auto &_index(Key &&key) {
         static_assert(std::is_default_constructible<M>::value,
                       "Mapped type must be default constructible");
-        auto &&result = _lower_bound(*this, key);
+        auto result = _lower_bound(*this, key);
         return (result.second
             ? result.first
             : _insert_before(
-                result.first,
+                std::move(result.first),
                 std::make_pair(std::forward<Key>(key), M{}))
         )->second;
     }
 
     template <class V>
     std::pair<Iterator, bool> _insert(V &&value) {
-        auto &&result = _lower_bound(*this, value.first);
+        auto result = _lower_bound(*this, value.first);
         return result.second
             ? std::make_pair(result.first, false)
             : std::make_pair(
-                _insert_before(result.first, std::forward<V>(value)),
+                _insert_before(std::move(result.first), std::forward<V>(value)),
                 true);
     }
 
@@ -353,21 +228,13 @@ private:
     }
 
 public:
-    Map() :
-        _head{}, _levels{},
-        _last{}, _size{}, _height{},
-        _random{std::random_device {}()} {}
+    Map() : _nodes{}, _height{}, _random{std::random_device {}()} {}
 
     Map(const Map &that) : Map{} {
         insert(that.begin(), that.end());
     }
 
-    Map(Map &&that)
-        : _head{std::move(that._head)}, _levels{that._levels},
-          _last{that._last}, _size{that._size}, _height{that._height},
-          _random{that._random} {
-        that.clear();
-    }
+    Map(Map &&that) = default;
 
     Map(std::initializer_list<ValueType> pairs) : Map{} {
         insert(pairs.begin(), pairs.end());
@@ -381,49 +248,40 @@ public:
         return *this;
     }
 
-    Map &operator=(Map &&that) {
-        _head = std::move(that._head);
-        _levels = that._levels;
-        _last = that._last;
-        _size = that._size;
-        _height = that._height;
-        _random = that._random;
-        that.clear();
-        return *this;
-    }
+    Map &operator=(Map &&that) = default;
 
     ~Map() = default;
 
-    constexpr std::size_t size() const {
-        return _size;
+    std::size_t size() const {
+        return _nodes.size();
     }
 
-    constexpr bool empty() const {
-        return size() == 0;
+    bool empty() const {
+        return _nodes.empty();
     }
 
     Iterator begin() {
-        return _begin();
+        return _nodes.begin();
     }
 
     Iterator end() {
-        return _end();
+        return _nodes.end();
     }
 
     ConstIterator begin() const {
-        return _begin();
+        return _nodes.begin();
     }
 
     ConstIterator end() const {
-        return _end();
+        return _nodes.end();
     }
 
     ReverseIterator rbegin() {
-        return std::make_reverse_iterator(end());
+        return _nodes.rbegin();
     }
 
     ReverseIterator rend() {
-        return std::make_reverse_iterator(begin());
+        return _nodes.rend();
     }
 
     Iterator find(const K &key) {
@@ -466,22 +324,7 @@ public:
     }
 
     void erase(Iterator iter) {
-        auto node = std::move(iter).node();
-        auto levels = node->levels();
-        for (std::size_t i = 0; i < node->height; ++i) {
-            auto &l = levels[i];
-            if (l.next) {
-                l.next->levels()[i].prev = l.prev;
-            }
-            (l.prev ? l.prev->levels()[i].next : _levels[i]) = l.next;
-        }
-        if (node->height == _height) {
-            // We may have decreased the height
-            for (; _height > 0 && !_levels[_height - 1]; --_height);
-        }
-        (node->next ? node->next->prev : _last) = node->prev;
-        (node->prev ? node->prev->next : _head) = std::move(node->next);
-        --_size;
+        _nodes.erase(iter.get());
     }
 
     void erase(const K &key) {
@@ -493,10 +336,8 @@ public:
     }
 
     void clear() {
-        _head = nullptr;
-        _levels.fill(nullptr);
-        _last = nullptr;
-        _size = 0;
+        _nodes.clear();
+        _height = Height{};
     }
 
     ValueType &index(std::size_t i) {
