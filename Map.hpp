@@ -48,6 +48,12 @@ private:
         // Caller (i.e. Node<V>::make) must connect prev properly
     }
 
+    ~Node() {
+        while (next) {
+            next = std::move(next->next);
+        }
+    }
+
 public:
     struct Link {
         Node *prev;
