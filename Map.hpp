@@ -266,6 +266,7 @@ private:
     std::size_t _size;
     std::size_t _height;
     std::default_random_engine _random;
+    std::bernoulli_distribution _flip_coin;
 
     Iterator _begin() const {
         return Iterator {_head.get()};
@@ -314,8 +315,7 @@ private:
     template <typename V>
     Iterator _insert_before(Iterator iter, V &&value) {
         std::size_t height = 0;
-        std::bernoulli_distribution flip_coin;
-        for (; height < MAX_HEIGHT && flip_coin(_random); ++height);
+        for (; height < MAX_HEIGHT && _flip_coin(_random); ++height);
         _height = std::max(_height, height);
 
         auto prev = iter.prev();
@@ -374,7 +374,7 @@ public:
     Map() :
         _head{}, _level_heads{},
         _last{}, _size{}, _height{},
-        _random{std::random_device {}()} {}
+        _random{std::random_device {}()}, _flip_coin{} {}
 
     Map(const Map &that) : Map{} {
         insert(that.begin(), that.end());
@@ -383,7 +383,7 @@ public:
     Map(Map &&that)
         : _head{std::move(that._head)}, _level_heads{that._level_heads},
           _last{that._last}, _size{that._size}, _height{that._height},
-          _random{that._random} {
+          _random{std::move(that._random)}, _flip_coin{std::move(that._flip_coin)} {
         that.clear();
     }
 
@@ -405,7 +405,8 @@ public:
         _last = that._last;
         _size = that._size;
         _height = that._height;
-        _random = that._random;
+        _random = std::move(that._random);
+        _flip_coin = std::move(that._flip_coin);
         that.clear();
         return *this;
     }
