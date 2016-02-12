@@ -247,6 +247,39 @@ template <typename V>
 constexpr bool operator!=(const ConstIter<V> &i1, const Iter<V> &i2) {
     return !(i1 == i2);
 }
+
+// Wrapper around std::size_t that zeroes on move
+struct Height {
+    std::size_t value;
+
+    constexpr Height() : value{} {}
+    constexpr Height(std::size_t value) : value{value} {}
+    constexpr Height(const Height &that) : value{that.value} {}
+    constexpr Height(Height &&that) : value{that.value} {
+        that.value = 0;
+    }
+
+    constexpr Height &operator=(const Height &that) {
+        if (this != &that) {
+            value = that.value;
+        }
+        return *this;
+    }
+
+    constexpr Height &operator=(Height &&that) {
+        value = that.value;
+        that.value = 0;
+        return *this;
+    }
+
+    constexpr operator std::size_t &() {
+        return value;
+    }
+
+    constexpr operator const std::size_t &() const {
+        return value;
+    }
+};
 } // anonymous namespace
 
 template <typename K, typename M>
@@ -264,7 +297,7 @@ private:
     std::array<Node<ValueType> *, MAX_HEIGHT> _level_heads;
     Node<ValueType> *_last;
     std::size_t _size;
-    std::size_t _height;
+    Height _height;
     std::default_random_engine _random;
     std::bernoulli_distribution _flip_coin;
 
@@ -318,7 +351,7 @@ private:
 
     template <typename V>
     Iterator _insert_before(Iterator iter, V &&value) {
-        std::size_t height = 0;
+        Height height;
         for (; height < MAX_HEIGHT && _flip_coin(_random); ++height);
         _height = std::max(_height, height);
 
@@ -384,12 +417,7 @@ public:
         insert(that.begin(), that.end());
     }
 
-    Map(Map &&that)
-        : _head{std::move(that._head)}, _level_heads{that._level_heads},
-          _last{that._last}, _size{that._size}, _height{that._height},
-          _random{std::move(that._random)}, _flip_coin{std::move(that._flip_coin)} {
-        that.clear();
-    }
+    Map(Map &&that) = default;
 
     Map(std::initializer_list<ValueType> pairs) : Map{} {
         insert(pairs.begin(), pairs.end());
@@ -403,17 +431,7 @@ public:
         return *this;
     }
 
-    Map &operator=(Map &&that) {
-        _head = std::move(that._head);
-        _level_heads = that._level_heads;
-        _last = that._last;
-        _size = that._size;
-        _height = that._height;
-        _random = std::move(that._random);
-        _flip_coin = std::move(that._flip_coin);
-        that.clear();
-        return *this;
-    }
+    Map &operator=(Map &&that) = default;
 
     ~Map() = default;
 
@@ -520,6 +538,7 @@ public:
         _level_heads.fill(nullptr);
         _last = nullptr;
         _size = 0;
+        _height = 0;
     }
 
     ValueType &index(std::size_t i) {
