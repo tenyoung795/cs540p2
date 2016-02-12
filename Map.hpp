@@ -27,7 +27,46 @@ class Node {
 public:
     using UniquePtr = std::unique_ptr<Node, _Deleter>;
 
+    struct Link {
+        Node *prev;
+        Node *next;
+    };
+
+    V value;
+    const std::size_t height;
+    Node *prev;
+    UniquePtr next;
+    // Link levels[height];
+
+    template <typename T, typename Iter>
+    static UniquePtr make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
+                          Iter iter) {
+        auto size = sizeof(Node) + _PADDING + height * sizeof(Link);
+        auto ptr = new char[size];
+        UniquePtr result{
+            new(ptr) Node{std::forward<T>(value), height, prev, std::move(next), iter}
+        };
+        if (prev) {
+            prev->next = std::move(result);
+        }
+        return result;
+    }
+
+    Link *levels() {
+        return reinterpret_cast<Link *>(
+            reinterpret_cast<char *>(this) + _PADDING + sizeof(*this));
+    }
+
+    const Link *levels() const {
+        return reinterpret_cast<const Link *>(
+            reinterpret_cast<const char *>(this) + _PADDING + sizeof(*this));
+    }
+
 private:
+    static constexpr auto _PADDING = alignof(Link) > alignof(Node)
+        ? alignof(Link) - alignof(Node)
+        : 0;
+
     template <typename T, typename Iter>
     Node(T &&v, std::size_t h, Node *p, UniquePtr &&n, Iter iter)
         : value{std::forward<T>(v)}, height{h}, prev{p}, next{std::move(n)} {
@@ -52,42 +91,6 @@ private:
         while (next) {
             next = std::move(next->next);
         }
-    }
-
-public:
-    struct Link {
-        Node *prev;
-        Node *next;
-    };
-
-    V value;
-    const std::size_t height;
-    Node *prev;
-    UniquePtr next;
-    // Link levels[height];
-
-    template <typename T, typename Iter>
-    static UniquePtr make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
-                          Iter iter) {
-        auto size = sizeof(Node) + height * sizeof(Link);
-        auto ptr = new char[size];
-        UniquePtr result{
-            new(ptr) Node{std::forward<T>(value), height, prev, std::move(next), iter}
-        };
-        if (prev) {
-            prev->next = std::move(result);
-        }
-        return result;
-    }
-
-    Link *levels() {
-        return reinterpret_cast<Link *>(
-            reinterpret_cast<char *>(this) + sizeof(*this));
-    }
-
-    const Link *levels() const {
-        return reinterpret_cast<const Link *>(
-            reinterpret_cast<const char *>(this) + sizeof(*this));
     }
 };
 
