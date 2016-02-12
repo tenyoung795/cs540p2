@@ -105,11 +105,11 @@ protected:
     explicit Iter(decltype(construct_end), Node<V> *last)
         : _prev{last}, _node{nullptr}, _next{nullptr} {}
 
-    Node<V> *prev() && {
+    constexpr Node<V> *prev() {
         return _prev;
     }
 
-    Node<V> *node() && {
+    constexpr Node<V> *node() {
         return _node;
     }
 
@@ -255,7 +255,7 @@ private:
     static constexpr auto MAX_HEIGHT = 32;
 
     typename Node<ValueType>::UniquePtr _head;
-    std::array<Node<ValueType> *, MAX_HEIGHT> _levels;
+    std::array<Node<ValueType> *, MAX_HEIGHT> _level_heads;
     Node<ValueType> *_last;
     std::size_t _size;
     std::size_t _height;
@@ -271,11 +271,23 @@ private:
 
     template <typename This>
     static auto _lower_bound(This &&self, const K &key) {
+        Node<ValueType> *ptr = nullptr;
+        for (auto i = self._height; i > 0; --i) {
+            while (true) {
+                auto next = ptr ? ptr->levels()[i - 1].next : self._level_heads[i - 1];
+                if (!(next && next->value.first < key)) break;
+                ptr = next;
+            }
+            if (ptr && ptr->value.first == key) {
+                return std::make_pair(decltype(self.begin()) {Iterator {ptr}}, true);
+            }
+        }
+        auto begin = ptr ? Iterator { ptr } : self.begin();
         auto end = self.end();
-        auto iter = std::lower_bound(self.begin(), end, key, [](auto &value, auto &key) {
+        auto result = std::find_if_not(begin, end, [&](auto &value) {
             return value.first < key;
         });
-        return std::make_pair(iter, iter != end && iter->first == key);
+        return std::make_pair(result, result != end && result->first == key);
     }
 
     template <typename This>
@@ -300,11 +312,11 @@ private:
         for (; height < MAX_HEIGHT && flip_coin(_random); ++height);
         _height = std::max(_height, height);
 
-        auto prev = std::move(iter).prev();
+        auto prev = iter.prev();
         auto &next = prev ? prev->next : _head;
         auto result = Node<ValueType>::make(
             std::forward<V>(value), height, prev, std::move(next),
-            _levels.begin());
+            _level_heads.begin());
         ++_size;
 
         if (prev) {
@@ -354,7 +366,7 @@ private:
 
 public:
     Map() :
-        _head{}, _levels{},
+        _head{}, _level_heads{},
         _last{}, _size{}, _height{},
         _random{std::random_device {}()} {}
 
@@ -363,7 +375,7 @@ public:
     }
 
     Map(Map &&that)
-        : _head{std::move(that._head)}, _levels{that._levels},
+        : _head{std::move(that._head)}, _level_heads{that._level_heads},
           _last{that._last}, _size{that._size}, _height{that._height},
           _random{that._random} {
         that.clear();
@@ -383,7 +395,7 @@ public:
 
     Map &operator=(Map &&that) {
         _head = std::move(that._head);
-        _levels = that._levels;
+        _level_heads = that._level_heads;
         _last = that._last;
         _size = that._size;
         _height = that._height;
@@ -466,18 +478,18 @@ public:
     }
 
     void erase(Iterator iter) {
-        auto node = std::move(iter).node();
+        auto node = iter.node();
         auto levels = node->levels();
         for (std::size_t i = 0; i < node->height; ++i) {
             auto &l = levels[i];
             if (l.next) {
                 l.next->levels()[i].prev = l.prev;
             }
-            (l.prev ? l.prev->levels()[i].next : _levels[i]) = l.next;
+            (l.prev ? l.prev->levels()[i].next : _level_heads[i]) = l.next;
         }
         if (node->height == _height) {
             // We may have decreased the height
-            for (; _height > 0 && !_levels[_height - 1]; --_height);
+            for (; _height > 0 && !_level_heads[_height - 1]; --_height);
         }
         (node->next ? node->next->prev : _last) = node->prev;
         (node->prev ? node->prev->next : _head) = std::move(node->next);
@@ -494,7 +506,7 @@ public:
 
     void clear() {
         _head = nullptr;
-        _levels.fill(nullptr);
+        _level_heads.fill(nullptr);
         _last = nullptr;
         _size = 0;
     }
