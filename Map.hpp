@@ -317,6 +317,9 @@ private:
         if (self.empty() || self._last->value.first < key) {
             return std::make_pair(self.end(), false);
         }
+        if (key < self._head->value.first) {
+            return std::make_pair(self.begin(), false);
+        }
 
         Node<ValueType> *ptr = nullptr;
         for (auto i = self._height; i > 0; --i) {
