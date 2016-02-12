@@ -420,7 +420,9 @@ public:
         _random{std::random_device {}()}, _flip_coin{} {}
 
     Map(const Map &that) : Map{} {
-        insert(that.begin(), that.end());
+        for (auto &value : that) {
+            _insert_before(end(), value);
+        }
     }
 
     Map(Map &&that) = default;
@@ -432,7 +434,9 @@ public:
     Map &operator=(const Map &that) {
         if (this != &that) {
             clear();
-            insert(that.begin(), that.end());
+            for (auto &value : that) {
+                _insert_before(end(), value);
+            }
         }
         return *this;
     }
