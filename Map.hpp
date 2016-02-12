@@ -100,15 +100,15 @@ class Iter : public std::iterator<std::bidirectional_iterator_tag, V> {
     Node<V> *_next;
 
     template <typename T>
-    friend bool operator==(const Iter<T> &, const Iter<T> &);
+    friend constexpr bool operator==(const Iter<T> &, const Iter<T> &);
 
 protected:
-    explicit Iter(Node<V> *node)
+    constexpr explicit Iter(Node<V> *node)
         : _prev{node ? node->prev : nullptr},
           _node{node},
           _next{node ? node->next.get() : nullptr} {}
 
-    explicit Iter(decltype(construct_end), Node<V> *last)
+    constexpr explicit Iter(decltype(construct_end), Node<V> *last)
         : _prev{last}, _node{nullptr}, _next{nullptr} {}
 
     constexpr Node<V> *prev() {
@@ -168,12 +168,12 @@ class ConstIter : public std::iterator<std::bidirectional_iterator_tag, const V>
     Iter<V> _iter;
 
     template <typename T>
-    friend bool operator==(const ConstIter<T> &, const ConstIter<T> &);
+    friend constexpr bool operator==(const ConstIter<T> &, const ConstIter<T> &);
 
 public:
     ConstIter() = delete;
     ConstIter(const ConstIter &) = default;
-    ConstIter(const Iter<V> &iter) : _iter{iter} {}
+    constexpr ConstIter(const Iter<V> &iter) : _iter{iter} {}
     ~ConstIter() = default;
     ConstIter &operator=(const ConstIter &) = default;
 
@@ -209,42 +209,42 @@ public:
 };
 
 template <typename V>
-bool operator==(const Iter<V> &i1, const Iter<V> &i2) {
+constexpr bool operator==(const Iter<V> &i1, const Iter<V> &i2) {
     return i1._node == i2._node;
 }
 
 template <typename V>
-bool operator==(const ConstIter<V> &i1, const ConstIter<V> &i2) {
+constexpr bool operator==(const ConstIter<V> &i1, const ConstIter<V> &i2) {
     return i1._iter == i2._iter;
 }
 
 template <typename V>
-bool operator==(const Iter<V> &i1, const ConstIter<V> &i2) {
+constexpr bool operator==(const Iter<V> &i1, const ConstIter<V> &i2) {
     return ConstIter<V>{i1} == i2;
 }
 
 template <typename V>
-bool operator==(const ConstIter<V> &i1, const Iter<V> &i2) {
+constexpr bool operator==(const ConstIter<V> &i1, const Iter<V> &i2) {
     return i2 == i1;
 }
 
 template <typename V>
-bool operator!=(const Iter<V> &i1, const Iter<V> &i2) {
+constexpr bool operator!=(const Iter<V> &i1, const Iter<V> &i2) {
     return !(i1 == i2);
 }
 
 template <typename V>
-bool operator!=(const ConstIter<V> &i1, const ConstIter<V> &i2) {
+constexpr bool operator!=(const ConstIter<V> &i1, const ConstIter<V> &i2) {
     return !(i1 == i2);
 }
 
 template <typename V>
-bool operator!=(const Iter<V> &i1, const ConstIter<V> &i2) {
+constexpr bool operator!=(const Iter<V> &i1, const ConstIter<V> &i2) {
     return !(i1 == i2);
 }
 
 template <typename V>
-bool operator!=(const ConstIter<V> &i1, const Iter<V> &i2) {
+constexpr bool operator!=(const ConstIter<V> &i1, const Iter<V> &i2) {
     return !(i1 == i2);
 }
 } // anonymous namespace
