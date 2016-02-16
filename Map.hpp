@@ -17,6 +17,9 @@
 namespace cs540 {
 namespace {
 template <typename V>
+struct Link;
+
+template <typename V>
 class Node {
     struct _Deleter {
         void operator()(Node *node) const {
@@ -28,24 +31,19 @@ class Node {
 public:
     using UniquePtr = std::unique_ptr<Node, _Deleter>;
 
-    struct Link {
-        Node *prev;
-        Node *next;
-    };
-
     V value;
     const std::size_t height;
     Node *prev;
     UniquePtr next;
-    // Link levels[height];
+    // Link<V> levels[height];
 
-    Link *levels() {
-        return reinterpret_cast<Link *>(
+    Link<V> *levels() {
+        return reinterpret_cast<Link<V> *>(
             reinterpret_cast<char *>(this) + _PADDING + sizeof(*this));
     }
 
-    const Link *levels() const {
-        return reinterpret_cast<const Link *>(
+    const Link<V> *levels() const {
+        return reinterpret_cast<const Link<V> *>(
             reinterpret_cast<const char *>(this) + _PADDING + sizeof(*this));
     }
 
@@ -53,7 +51,7 @@ protected:
     template <typename T, typename Iter>
     static UniquePtr make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
                           Iter iter) {
-        auto size = sizeof(Node) + _PADDING + height * sizeof(Link);
+        auto size = sizeof(Node) + _PADDING + height * sizeof(Link<V>);
         auto ptr = new char[size];
         UniquePtr result{
             new(ptr) Node{std::forward<T>(value), height, prev, std::move(next), iter}
@@ -69,8 +67,8 @@ protected:
     friend class Map;
 
 private:
-    static constexpr auto _PADDING = alignof(Link) > alignof(Node)
-        ? alignof(Link) - alignof(Node)
+    static constexpr auto _PADDING = alignof(Link<V>) > alignof(Node)
+        ? alignof(Link<V>) - alignof(Node)
         : 0;
 
     template <typename T, typename Iter>
@@ -98,6 +96,12 @@ private:
             next = std::move(next->next);
         }
     }
+};
+
+template <typename V>
+struct Link {
+    Node<V> *prev;
+    Node<V> *next;
 };
 
 constexpr struct {} construct_end{};
@@ -301,8 +305,7 @@ public:
 
 private:
     static constexpr auto MAX_HEIGHT = 31;
-    using _Link = typename Node<ValueType>::Link;
-    using _Links = std::array<_Link, MAX_HEIGHT>;
+    using _Links = std::array<Link<ValueType>, MAX_HEIGHT>;
     class _SearchResult {
         Iterator _iter;
         _Links _links;
@@ -348,8 +351,8 @@ private:
         for (auto i = _height; i > 0; --i) {
             auto &link = links[i - 1];
             link = i == _height || !links[i].prev
-                ? _Link {nullptr, _level_heads[i - 1]}
-                : _Link {links[i].prev, links[i].prev->levels()[i - 1].next};
+                ? Link<ValueType> {nullptr, _level_heads[i - 1]}
+                : Link<ValueType> {links[i].prev, links[i].prev->levels()[i - 1].next};
             while (link.next && link.next->value.first < key) {
                 if (link.next->value.first == key) {
                     return _SearchResult {Iterator {link.next}};
