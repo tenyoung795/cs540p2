@@ -1,4 +1,4 @@
-CXXFLAGS ?= -O3
+CXXFLAGS ?= -g
 CXXFLAGS += -std=c++14 -Wall -Wextra -pedantic -Werror -Wfatal-errors
 EXTRA_TARGETS :=
 REQUIRED_TARGETS := test-kec test minimal morseex test-scaling
