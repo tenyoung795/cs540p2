@@ -351,8 +351,8 @@ private:
         return Iterator {construct_end, _last};
     }
 
-    template <typename T>
-    _SearchResult _lower_bound(const T &key) const {
+    template <typename Key>
+    _SearchResult _lower_bound(const Key &key) const {
         _Links links{};
         for (auto i = _height; i > 0; --i) {
             auto &link = links[i - 1];
@@ -379,7 +379,8 @@ private:
         return _SearchResult {result, links};
     }
 
-    Iterator _find(const K &key) const {
+    template <typename Key>
+    Iterator _find(const Key &key) const {
         return _lower_bound(key).match([] (auto iter) {
             return iter;
         }, [this] (auto, auto) {
@@ -387,8 +388,8 @@ private:
         });
     }
 
-    template <typename This>
-    static auto &_at(This &&self, const K &key) {
+    template <typename This, typename Key>
+    static auto &_at(This &&self, const Key &key) {
         auto iter = self.find(key);
         if (iter == self.end()) {
             throw std::out_of_range{"Not found"};
@@ -515,19 +516,23 @@ public:
         return std::make_reverse_iterator(begin());
     }
 
-    Iterator find(const K &key) {
+    template <typename Key>
+    Iterator find(const Key &key) {
         return _find(key);
     }
 
-    ConstIterator find(const K &key) const {
+    template <typename Key>
+    ConstIterator find(const Key &key) const {
         return _find(key);
     }
 
-    M &at(const K &key) {
+    template <typename Key>
+    M &at(const Key &key) {
         return _at(*this, key);
     }
 
-    const M &at(const K &key) const {
+    template <typename Key>
+    const M &at(const Key &key) const {
         return _at(*this, key);
     }
 
@@ -573,7 +578,8 @@ public:
         --_size;
     }
 
-    void erase(const K &key) {
+    template <typename Key>
+    void erase(const Key &key) {
         auto iter = find(key);
         if (iter == end()) {
             throw std::out_of_range{"Not found"};
