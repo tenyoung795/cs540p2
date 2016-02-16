@@ -450,12 +450,6 @@ private:
         });
     }
 
-    template <typename This>
-    static ValueType &_index(This &&self, std::size_t i) {
-        throw std::out_of_range{
-            std::to_string(i) + " beyond size " + std::to_string(self.size())};
-    }
-
 public:
     Map() :
         _head{},
@@ -592,14 +586,6 @@ public:
         _last = nullptr;
         _size = 0;
         _height = 0;
-    }
-
-    ValueType &index(std::size_t i) {
-        return _index(*this, i);
-    }
-
-    const ValueType &index(std::size_t i) const {
-        return _index(*this, i);
     }
 }; // template <typename, typename> class Map
 
