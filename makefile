@@ -1,8 +1,11 @@
 CXXFLAGS ?= -O3
 CXXFLAGS += -std=c++14 -Wall -Wextra -pedantic -Werror -Wfatal-errors
-TARGETS := test-kec test minimal morseex test-scaling
+EXTRA_TARGETS :=
+REQUIRED_TARGETS := test-kec test minimal morseex test-scaling
 
-all: $(TARGETS)
+extra: $(EXTRA_TARGETS)
+required: $(REQUIRED_TARGETS)
+all: extra required
 
 %: %.cpp Map.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
@@ -10,4 +13,4 @@ all: $(TARGETS)
 clean:
 	$(RM) $(TARGETS)
 
-.PHONY: all clean
+.PHONY: all clean extra required
