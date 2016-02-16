@@ -261,36 +261,42 @@ constexpr bool operator!=(const ConstIter<V> &i1, const Iter<V> &i2) {
     return !(i1 == i2);
 }
 
-// Wrapper around std::size_t that zeroes on move
-struct Height {
-    std::size_t value;
+// Wrapper that defaults on move
+template <typename T>
+struct DefaultOnMove {
+    static_assert(std::is_default_constructible<T>::value,
+                  "T must be default constructible");
+    static_assert(std::is_trivially_move_constructible<T>::value,
+                  "T must be trivially move constructible");
+    static_assert(std::is_trivially_move_assignable<T>::value,
+                  "T must be trivially move assignable");
 
-    constexpr Height() : value{} {}
-    constexpr Height(std::size_t value) : value{value} {}
-    constexpr Height(const Height &that) : value{that.value} {}
-    constexpr Height(Height &&that) : value{that.value} {
-        that.value = 0;
+    T value;
+
+    DefaultOnMove() : value{} {}
+    DefaultOnMove(const DefaultOnMove &) = default;
+    DefaultOnMove(T &&value) : value{std::move(value)} {}
+    DefaultOnMove(DefaultOnMove &&that) : value{std::move(that.value)} {
+        that.value = {};
     }
 
-    constexpr Height &operator=(const Height &that) {
-        if (this != &that) {
-            value = that.value;
-        }
+    DefaultOnMove &operator=(const DefaultOnMove &) = default;
+    DefaultOnMove &operator=(DefaultOnMove &&that) {
+        value = std::move(that.value);
+        that.value = {};
         return *this;
     }
 
-    constexpr Height &operator=(Height &&that) {
-        value = that.value;
-        that.value = 0;
-        return *this;
-    }
-
-    constexpr operator std::size_t &() {
+    constexpr operator T &() {
         return value;
     }
 
-    constexpr operator const std::size_t &() const {
+    constexpr operator const T &() const {
         return value;
+    }
+
+    operator T () && {
+        return std::move(value);
     }
 };
 } // anonymous namespace
@@ -331,9 +337,9 @@ private:
 
     typename Node<ValueType>::UniquePtr _head;
     std::array<Node<ValueType> *, MAX_HEIGHT> _level_heads;
-    Node<ValueType> *_last;
-    std::size_t _size;
-    Height _height;
+    DefaultOnMove<Node<ValueType> *> _last;
+    DefaultOnMove<std::size_t> _size;
+    DefaultOnMove<std::size_t> _height;
     std::default_random_engine _random;
     std::bernoulli_distribution _flip_coin;
 
@@ -392,7 +398,7 @@ private:
 
     template <typename LinkIter, typename V>
     Iterator _insert_before(Iterator iter, LinkIter link_iter, V &&value) {
-        Height height;
+        DefaultOnMove<std::size_t> height;
         for (; height < MAX_HEIGHT && _flip_coin(_random); ++height);
         _height = std::max(_height, height);
 
@@ -451,7 +457,7 @@ private:
 
 public:
     Map() :
-        _head{}, _level_heads{},
+        _head{},
         _last{}, _size{}, _height{},
         _random{std::random_device {}()}, _flip_coin{} {}
 
@@ -577,7 +583,6 @@ public:
 
     void clear() {
         _head = nullptr;
-        _level_heads.fill(nullptr);
         _last = nullptr;
         _size = 0;
         _height = 0;
