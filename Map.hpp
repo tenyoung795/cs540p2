@@ -49,13 +49,71 @@ public:
 
 protected:
     template <typename T, typename Iter>
-    static UniquePtr make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
-                          Iter iter) {
+    static UniquePtr cons(UniquePtr &&head, T &&value, std::size_t height, Iter iter) {
+        if (head) assert(!head->prev);
+        auto result = _make(std::forward<T>(value), height, nullptr, std::move(head), iter);
+        assert(result);
+        return result;
+    }
+
+    template <typename T, typename Iter>
+    Node &emplace_after(T &&value, std::size_t height, Iter iter) {
+        if (next) next->prev = nullptr;
+        try {
+            _make(std::forward<T>(value), height, this, std::move(next), iter);
+        } catch (...) {
+            if (next) next->prev = this;
+            throw;
+        }
+        return *next;
+    }
+
+    static UniquePtr remove_head(UniquePtr head) {
+        if (!head) return nullptr;
+        assert(!head->prev);
+        for (std::size_t i = head->height; i > 0; --i) {
+            auto &level = head->levels()[i - 1];
+            assert(!level.prev);
+            if (level.next) {
+                level.next->levels()[i - 1].prev = nullptr;
+                level.next = nullptr;
+            }
+        }
+        if (head->next) head->next->prev = nullptr;
+        return std::move(head->next);
+    }
+
+    void remove_next() {
+        if (!next) return;
+        for (std::size_t i = next->height; i > 0; --i) {
+            auto &level = next->levels()[i - 1];
+            if (level.prev) {
+                level.prev->levels()[i - 1].next = level.next;
+            }
+            if (level.next) {
+                level.next->levels()[i - 1].prev = level.prev;
+            }
+            level = {};
+        }
+        next->prev = nullptr;
+        auto n = remove_head(std::move(next));
+        if (n) n->prev = this;
+        next = std::move(n);
+    }
+
+    template <typename, typename>
+    friend class Map;
+
+private:
+    template <typename T, typename Iter>
+    static UniquePtr _make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
+                           Iter iter) {
         auto size = sizeof(Node) + _PADDING + height * sizeof(Link<V>);
-        auto ptr = new char[size];
+        auto ptr = std::make_unique<char []>(size);
         UniquePtr result{
-            new(ptr) Node{std::forward<T>(value), height, prev, std::move(next), iter}
+            new(ptr.get()) Node {std::forward<T>(value), height, prev, std::move(next), iter}
         };
+        ptr.release();
         if (prev) {
             prev->next = std::move(result);
         }
@@ -63,10 +121,6 @@ protected:
         return result;
     }
 
-    template <typename, typename>
-    friend class Map;
-
-private:
     static constexpr auto _PADDING = alignof(Link<V>) > alignof(Node)
         ? alignof(Link<V>) - alignof(Node)
         : 0;
@@ -74,6 +128,9 @@ private:
     template <typename T, typename Iter>
     Node(T &&v, std::size_t h, Node *p, UniquePtr &&n, Iter iter)
         : value{std::forward<T>(v)}, height{h}, prev{p}, next{std::move(n)} {
+        if (prev) assert(!prev->next);
+        if (next) assert(!next->prev);
+
         if (next) {
             next->prev = this;
         }
@@ -81,9 +138,11 @@ private:
             auto &level = levels()[i];
             new(&level) auto(*iter);
             if (level.prev) {
+                assert(level.prev->levels()[i].next == level.next);
                 level.prev->levels()[i].next = this;
             }
             if (level.next) {
+                assert(level.next->levels()[i].prev == level.prev);
                 level.next->levels()[i].prev = this;
             }
             ++iter;
@@ -92,7 +151,9 @@ private:
     }
 
     ~Node() {
+        assert(!prev);
         while (next) {
+            next->prev = nullptr;
             next = std::move(next->next);
         }
     }
@@ -104,31 +165,21 @@ struct Link {
     Node<V> *next;
 };
 
-constexpr struct {} construct_end{};
-
 template <typename V>
 class Iter : public std::iterator<std::bidirectional_iterator_tag, V> {
-    Node<V> *_prev;
+    static constexpr Node<V> *_DEFAULT_LAST = nullptr;
+
+    std::reference_wrapper<Node<V> *const> _last;
     Node<V> *_node;
-    Node<V> *_next;
 
     template <typename T>
     friend constexpr bool operator==(const Iter<T> &, const Iter<T> &);
 
 protected:
-    constexpr explicit Iter(Node<V> *node)
-        : _prev{node ? node->prev : nullptr},
-          _node{node},
-          _next{node ? node->next.get() : nullptr} {}
+    constexpr explicit Iter(Node<V> *const &last, Node<V> *node)
+        : _last{last}, _node{node} {}
 
-    constexpr explicit Iter(decltype(construct_end), Node<V> *last)
-        : _prev{last}, _node{nullptr}, _next{nullptr} {}
-
-    constexpr Node<V> *prev() {
-        return _prev;
-    }
-
-    constexpr Node<V> *node() {
+    constexpr Node<V> *node() const {
         return _node;
     }
 
@@ -136,15 +187,13 @@ protected:
     friend class Map;
 
 public:
-    constexpr Iter() : Iter{construct_end, nullptr} {}
+    constexpr Iter() : Iter{_DEFAULT_LAST, nullptr} {}
     Iter(const Iter &) = default;
     ~Iter() = default;
     Iter &operator=(const Iter &) = default;
 
     Iter &operator++() {
-        _prev = _node;
-        _node = _next;
-        _next = _next ? _next->next.get() : nullptr;
+        _node = _node->next.get();
         return *this;
     }
 
@@ -155,9 +204,7 @@ public:
     }
 
     Iter &operator--() {
-        _next = _node;
-        _node = _prev;
-        _prev = _prev ? _prev->prev : nullptr;
+        _node = _node ? _node->prev : _last.get();
         return *this;
     }
 
@@ -223,7 +270,10 @@ public:
 
 template <typename V>
 constexpr bool operator==(const Iter<V> &i1, const Iter<V> &i2) {
-    return i1._node == i2._node;
+    constexpr auto fields = [] (auto &i) {
+        return std::make_pair(&i._last.get(), i._node);
+    };
+    return fields(i1) == fields(i2);
 }
 
 template <typename V>
@@ -275,6 +325,7 @@ struct DefaultOnMove {
 
     DefaultOnMove() : value{} {}
     DefaultOnMove(const DefaultOnMove &) = default;
+    DefaultOnMove(const T &value) : value{value} {}
     DefaultOnMove(T &&value) : value{std::move(value)} {}
     DefaultOnMove(DefaultOnMove &&that) : value{std::move(that.value)} {
         that.value = {};
@@ -336,19 +387,23 @@ private:
     };
 
     typename Node<ValueType>::UniquePtr _head;
-    std::array<Node<ValueType> *, MAX_HEIGHT> _level_heads;
+    std::array<DefaultOnMove<Node<ValueType> *>, MAX_HEIGHT> _level_heads;
     DefaultOnMove<Node<ValueType> *> _last;
     DefaultOnMove<std::size_t> _size;
     DefaultOnMove<std::size_t> _height;
     std::default_random_engine _random;
     std::bernoulli_distribution _flip_coin;
 
+    Iterator _iter(Node<ValueType> *node) const {
+        return Iterator {_last, node};
+    }
+
     Iterator _begin() const {
-        return Iterator {_head.get()};
+        return _iter(_head.get());
     }
 
     Iterator _end() const {
-        return Iterator {construct_end, _last};
+        return _iter(nullptr);
     }
 
     template <typename Key>
@@ -361,13 +416,13 @@ private:
                 : Link<ValueType> {links[i].prev, links[i].prev->levels()[i - 1].next};
             while (link.next && link.next->value.first < key) {
                 if (link.next->value.first == key) {
-                    return _SearchResult {Iterator {link.next}};
+                    return _SearchResult {_iter(link.next)};
                 }
                 link = {link.next, link.next->levels()[i - 1].next};
             }
         }
         auto begin = _height > 0 && links[0].prev
-            ? Iterator {links[0].prev}
+            ? _iter(links[0].prev)
             : _begin();
         auto end = _end();
         auto result = std::find_if_not(begin, end, [&] (auto &value) {
@@ -397,33 +452,50 @@ private:
         return iter->second;
     }
 
+    void _sync_level_heads(Node<ValueType> &node) {
+        for (std::size_t i = 0; i < node.height; ++i) {
+            auto &level = node.levels()[i];
+            if (!level.prev) {
+                assert(level.next == _level_heads[i]);
+                if (_level_heads[i]) assert(_level_heads[i].value->levels()[i].prev == &node);
+                _level_heads[i] = &node;
+            }
+        }
+    }
+
     template <typename LinkIter, typename V>
     Iterator _insert_before(Iterator iter, LinkIter link_iter, V &&value) {
         DefaultOnMove<std::size_t> height;
         for (; height < MAX_HEIGHT && _flip_coin(_random); ++height);
-        _height = std::max(_height, height);
 
-        auto prev = iter.prev();
-        auto &next = prev ? prev->next : _head;
-        auto result = Node<ValueType>::make(
-            std::forward<V>(value), height, prev, std::move(next),
-            link_iter);
-        auto &node = prev ? *prev->next : *result;
-
-        for (std::size_t i = 0; i < height; ++i) {
-            if (!link_iter->prev) _level_heads[i] = &node;
-            ++link_iter;
-        }
-
-        if (!node.next) {
-            _last = &node;
-        }
-        if (!node.prev) {
-            _head = std::move(result);
+        auto next = iter.node();
+        Node<ValueType> *node;
+        if (next == _head.get()) {
+            _head = Node<ValueType>::cons(
+                std::move(_head), std::forward<V>(value), height, link_iter);
+            _sync_level_heads(*_head);
+            if (empty()) {
+                assert(!_last);
+                _last = &*_head;
+            }
+            node = &*_head;
+        } else {
+            auto prev = next ? next->prev : _last.value;
+            assert(prev);
+            auto &result = prev->emplace_after(std::forward<V>(value), height, link_iter);
+            _sync_level_heads(result);
+            if (!result.next) {
+                assert(result.prev == _last);
+                assert(_last);
+                assert(_last.value->next.get() == &result);
+                _last = &result;
+            }
+            node = &result;
         }
 
         ++_size;
-        return Iterator {&node};
+        _height = std::max(_height, height);
+        return _iter(node);
     }
 
     template <typename Key>
@@ -452,7 +524,7 @@ private:
 
 public:
     Map() :
-        _head{},
+        _head{}, _level_heads{},
         _last{}, _size{}, _height{},
         _random{std::random_device {}()}, _flip_coin{} {}
 
@@ -555,20 +627,31 @@ public:
 
     void erase(Iterator iter) {
         auto node = iter.node();
-        auto levels = node->levels();
-        for (std::size_t i = 0; i < node->height; ++i) {
-            auto &l = levels[i];
-            if (l.next) {
-                l.next->levels()[i].prev = l.prev;
+
+        for (std::size_t i = node->height; i > 0; --i) {
+            auto &level = node->levels()[i - 1];
+            if (!level.prev) {
+                assert(_level_heads[i - 1] == node);
+                _level_heads[i - 1] = level.next;
             }
-            (l.prev ? l.prev->levels()[i].next : _level_heads[i]) = l.next;
         }
         if (node->height == _height) {
             // We may have decreased the height
             for (; _height > 0 && !_level_heads[_height - 1]; --_height);
         }
-        (node->next ? node->next->prev : _last) = node->prev;
-        (node->prev ? node->prev->next : _head) = std::move(node->next);
+        if (node == _last) {
+            _last = node->prev;
+        }
+
+        auto prev = node->prev;
+        if (prev) {
+            assert(prev->next.get() == node);
+            prev->remove_next();
+        } else {
+            assert(_head.get() == node);
+            _head = Node<ValueType>::remove_head(std::move(_head));
+        }
+
         --_size;
     }
 
@@ -583,6 +666,7 @@ public:
 
     void clear() {
         _head = nullptr;
+        _level_heads.fill(nullptr);
         _last = nullptr;
         _size = 0;
         _height = 0;
