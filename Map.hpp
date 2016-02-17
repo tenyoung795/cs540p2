@@ -539,6 +539,34 @@ private:
         return _iter(node);
     }
 
+    template <typename V>
+    auto _insert_at_end(V &&value) {
+        class LastIter : public std::iterator<
+            std::input_iterator_tag, const Link<ValueType>> {
+            typename decltype(_level_lasts)::const_iterator _iter;
+
+        public:
+            LastIter(decltype(_iter) iter) : _iter{iter} {}
+
+            Link<ValueType> operator*() const {
+                return {*_iter, nullptr};
+            }
+
+            LastIter &operator++() {
+                ++_iter;
+                return *this;
+            }
+
+            LastIter operator++(int) {
+                auto tmp = *this;
+                ++*this;
+                return tmp;
+            }
+        };
+        return _insert_before(
+            _end(), LastIter {_level_lasts.begin()}, std::forward<V>(value));
+    }
+
     template <typename Key>
     auto &_index(Key &&key) {
         static_assert(std::is_default_constructible<M>::value,
@@ -570,7 +598,9 @@ public:
         _random{std::random_device {}()}, _flip_coin{} {}
 
     Map(const Map &that) : Map{} {
-        insert(that.begin(), that.end());
+        for (auto &value : that) {
+            _insert_at_end(value);
+        }
     }
 
     Map(Map &&that) = default;
@@ -582,7 +612,9 @@ public:
     Map &operator=(const Map &that) {
         if (this != &that) {
             clear();
-            insert(that.begin(), that.end());
+            for (auto &value : that) {
+                _insert_at_end(value);
+            }
         }
         return *this;
     }
