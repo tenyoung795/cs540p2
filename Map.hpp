@@ -418,6 +418,7 @@ private:
     typename Node<ValueType>::UniquePtr _head;
     std::array<DefaultOnMove<Node<ValueType> *>, MAX_HEIGHT> _level_heads;
     DefaultOnMove<Node<ValueType> *> _last;
+    std::array<DefaultOnMove<Node<ValueType> *>, MAX_HEIGHT> _level_lasts;
     DefaultOnMove<std::size_t> _size;
     DefaultOnMove<std::size_t> _height;
     std::default_random_engine _random;
@@ -438,6 +439,13 @@ private:
     template <typename Key>
     _SearchResult _lower_bound(const Key &key) const {
         _Links links{};
+
+        if (!_last || _last.value->value().first < key) {
+            std::transform(_level_lasts.begin(), _level_lasts.end(), links.begin(),
+                           [] (auto last) { return Link<ValueType> {last, nullptr }; });
+            return _SearchResult {_end(), links};
+        }
+
         for (auto i = _height; i > 0; --i) {
             auto &link = links[i - 1];
             link = i == _height || !links[i].prev
@@ -481,13 +489,17 @@ private:
         return iter->second;
     }
 
-    void _sync_level_heads(Node<ValueType> &node) {
+    void _sync_level_lists(Node<ValueType> &node) {
         for (std::size_t i = 0; i < node.height(); ++i) {
             auto &level = node.levels(i);
             if (!level.prev) {
                 assert(level.next == _level_heads[i]);
                 if (_level_heads[i]) assert(_level_heads[i].value->levels(i).prev == &node);
                 _level_heads[i] = &node;
+            }
+            if (!level.next) {
+                assert(level.prev == _level_lasts[i]);
+                _level_lasts[i] = &node;
             }
         }
     }
@@ -502,7 +514,7 @@ private:
         if (next == _head.get()) {
             _head = Node<ValueType>::cons(
                 std::move(_head), std::forward<V>(value), height, link_iter);
-            _sync_level_heads(*_head);
+            _sync_level_lists(*_head);
             if (empty()) {
                 assert(!_last);
                 _last = &*_head;
@@ -512,7 +524,7 @@ private:
             auto prev = next ? next->prev() : _last.value;
             assert(prev);
             auto &result = prev->emplace_after(std::forward<V>(value), height, link_iter);
-            _sync_level_heads(result);
+            _sync_level_lists(result);
             if (!result.next()) {
                 assert(result.prev() == _last);
                 assert(_last);
@@ -554,7 +566,7 @@ private:
 public:
     Map() :
         _head{}, _level_heads{},
-        _last{}, _size{}, _height{},
+        _last{}, _level_lasts{}, _size{}, _height{},
         _random{std::random_device {}()}, _flip_coin{} {}
 
     Map(const Map &that) : Map{} {
@@ -659,6 +671,10 @@ public:
 
         for (std::size_t i = node->height(); i > 0; --i) {
             auto &level = node->levels(i - 1);
+            if (!level.next) {
+                assert(_level_lasts[i - 1] == node);
+                _level_lasts[i - 1] = level.prev;
+            }
             if (!level.prev) {
                 assert(_level_heads[i - 1] == node);
                 _level_heads[i - 1] = level.next;
@@ -697,6 +713,7 @@ public:
         _head = nullptr;
         _level_heads.fill(nullptr);
         _last = nullptr;
+        _level_lasts.fill(nullptr);
         _size = 0;
         _height = 0;
     }
