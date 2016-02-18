@@ -205,7 +205,7 @@ class Iter : public std::iterator<std::bidirectional_iterator_tag, V> {
     friend constexpr bool operator==(const Iter<T> &, const Iter<T> &);
 
 protected:
-    constexpr explicit Iter(Node<V> *const &last, Node<V> *node)
+    constexpr explicit Iter(std::reference_wrapper<Node<V> *const> last, Node<V> *node)
         : _last{last}, _node{node} {}
 
     constexpr Node<V> *node() const {
@@ -425,7 +425,7 @@ private:
     std::bernoulli_distribution _flip_coin;
 
     Iterator _iter(Node<ValueType> *node) const {
-        return Iterator {_last, node};
+        return Iterator {std::cref(_last.value), node};
     }
 
     Iterator _begin() const {
