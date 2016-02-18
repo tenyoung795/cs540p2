@@ -480,10 +480,10 @@ private:
         });
     }
 
-    template <typename This, typename Key>
-    static auto &_at(This &&self, const Key &key) {
-        auto iter = self.find(key);
-        if (iter == self.end()) {
+    template <typename Key>
+    M &_at(const Key &key) const {
+        auto iter = _find(key);
+        if (iter == _end()) {
             throw std::out_of_range{"Not found"};
         }
         return iter->second;
@@ -568,7 +568,7 @@ private:
     }
 
     template <typename Key>
-    auto &_index(Key &&key) {
+    M &_subscript(Key &&key) {
         static_assert(std::is_default_constructible<M>::value,
                       "Mapped type must be default constructible");
         return _lower_bound(key).match([] (auto iter) {
@@ -667,20 +667,20 @@ public:
 
     template <typename Key>
     M &at(const Key &key) {
-        return _at(*this, key);
+        return _at(key);
     }
 
     template <typename Key>
     const M &at(const Key &key) const {
-        return _at(*this, key);
+        return _at(key);
     }
 
     M &operator[](const K &key) {
-        return _index(key);
+        return _subscript(key);
     }
 
     M &operator[](K &&key) {
-        return _index(std::move(key));
+        return _subscript(std::move(key));
     }
 
     std::pair<Iterator, bool> insert(const ValueType &value) {
