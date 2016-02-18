@@ -13,7 +13,6 @@ add_executable(morseex morseex.cpp)
 add_dependencies(morseex map)
 add_executable(test-scaling test-scaling.cpp)
 add_dependencies(test-scaling map)
-target_compile_options(test-scaling PRIVATE -O3)
 add_custom_target(required)
 add_dependencies(required test-kec test minimal morseex test-scaling)
 
