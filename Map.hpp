@@ -593,7 +593,9 @@ private:
 
     Iterator _index(std::size_t i) const {
         if (i >= size()) return _end();
-        throw std::runtime_error {__PRETTY_FUNCTION__};
+        auto iter = _begin();
+        std::advance(iter, i);
+        return iter;
     }
 
 public:
