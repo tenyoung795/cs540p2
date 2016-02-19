@@ -4,6 +4,7 @@ test
 minimal
 morseex
 test-scaling
+test-index
 CMakeCache.txt
 CMakeFiles
 CMakeScripts
