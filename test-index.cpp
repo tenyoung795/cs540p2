@@ -39,8 +39,8 @@ OutOfRangeTest<K, M> out_of_range_test(cs540::Map<K, M> map, std::size_t offset)
 }
 
 template <typename K, typename M>
-void throws_out_of_range(const OutOfRangeTest<K, M> &test) {
-    BOOST_CHECK_THROW(test.map.index(test.map.size() + test.offset), std::out_of_range);
+void returns_end(const OutOfRangeTest<K, M> &test) {
+    BOOST_CHECK(test.map.index(test.map.size()) == test.map.end());
 }
 
 struct InRangeTest {
@@ -54,7 +54,7 @@ void at_index(const InRangeTest &test) {
         map.insert({i, i});
     }
     decltype(map)::ValueType expected_value{test.index, test.index};
-    BOOST_CHECK_EQUAL(expected_value, map.index(test.index));
+    BOOST_CHECK_EQUAL(expected_value, *map.index(test.index));
 }
 
 bool init_unit_test() {
@@ -70,7 +70,7 @@ bool init_unit_test() {
         auto &&range = boost::irange(0, 10) | transformed([map] (auto offset) {
             return out_of_range_test(std::move(map), offset);
         });
-        suite.add(BOOST_PARAM_TEST_CASE((throws_out_of_range<std::size_t, unit>),
+        suite.add(BOOST_PARAM_TEST_CASE((returns_end<std::size_t, unit>),
                                         range.begin(), range.end()));
     }
     for (std::size_t size = 0; size < 10; ++size) {

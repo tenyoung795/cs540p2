@@ -591,13 +591,8 @@ private:
         });
     }
 
-    ValueType &_index(std::size_t i) const {
-        if (i >= size()) {
-            throw std::out_of_range {
-                "Index " + std::to_string(i)
-                + " not in range of size " + std::to_string(size())
-            };
-        }
+    Iterator _index(std::size_t i) const {
+        if (i >= size()) return _end();
         throw std::runtime_error {__PRETTY_FUNCTION__};
     }
 
@@ -760,11 +755,11 @@ public:
         _height = 0;
     }
 
-    ValueType &index(std::size_t i) {
+    Iterator index(std::size_t i) {
         return _index(i);
     }
 
-    const ValueType &index(std::size_t i) const {
+    ConstIterator index(std::size_t i) const {
         return _index(i);
     }
 }; // template <typename, typename> class Map
