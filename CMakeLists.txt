@@ -23,6 +23,8 @@ add_dependencies(required test-kec test minimal morseex test-scaling)
 
 add_executable(test-index test-index.cpp)
 add_dependencies(test-index map)
+add_executable(test-index-complexity test-index-complexity.cpp)
+add_dependencies(test-index map)
 add_custom_target(extra)
 add_dependencies(extra test-index)
 

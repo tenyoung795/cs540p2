@@ -5,6 +5,7 @@ minimal
 morseex
 test-scaling
 test-index
+test-index-complexity
 CMakeCache.txt
 CMakeFiles
 CMakeScripts
