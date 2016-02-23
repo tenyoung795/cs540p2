@@ -11,335 +11,12 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace cs540 {
 namespace {
-template <typename V>
-struct Link;
-
-template <typename V>
-class Node {
-    struct _Deleter {
-        void operator()(Node *node) const {
-            node->~Node();
-            delete[] reinterpret_cast<char *>(node);
-        }
-    };
-
-public:
-    using UniquePtr = std::unique_ptr<Node, _Deleter>;
-
-private:
-    static constexpr auto _PADDING = alignof(Link<V>) > alignof(Node)
-        ? alignof(Link<V>) - alignof(Node)
-        : 0;
-
-    V _value;
-    const std::size_t _height;
-    Node *_prev;
-    UniquePtr _next;
-    // Link<V> _levels[height];
-
-    template <typename T, typename Iter>
-    Node(T &&value, std::size_t height, Node *prev, UniquePtr &&next, Iter iter)
-        : _value{std::forward<T>(value)}, _height{height}, _prev{prev}, _next{std::move(next)} {
-        if (_prev) assert(!_prev->next());
-        if (_next) assert(!_next->prev());
-
-        if (_next) {
-            _next->_prev = this;
-        }
-        for (std::size_t i = 0; i < _height; ++i) {
-            auto &level = _levels(i);
-            new(&level) auto(*iter);
-            if (level.prev) {
-                assert(level.prev->levels(i).next == level.next);
-                level.prev->_levels(i).next = this;
-            }
-            if (level.next) {
-                assert(level.next->levels(i).prev == level.prev);
-                level.next->_levels(i).prev = this;
-            }
-            ++iter;
-        }
-        // Caller (i.e. Node<V>::make) must connect prev properly
-    }
-
-    ~Node() {
-        assert(!prev());
-        while (next()) {
-            next()->_prev = nullptr;
-            _next = std::move(next()->_next);
-        }
-    }
-
-    template <typename T, typename Iter>
-    static UniquePtr _make(T &&value, std::size_t height, Node *prev, UniquePtr &&next,
-                           Iter iter) {
-        auto size = sizeof(Node) + _PADDING + height * sizeof(Link<V>);
-        auto ptr = std::make_unique<char []>(size);
-        UniquePtr result{
-            new(ptr.get()) Node {std::forward<T>(value), height, prev, std::move(next), iter}
-        };
-        ptr.release();
-        if (prev) {
-            prev->_next = std::move(result);
-        }
-        assert(!prev == !!result);
-        return result;
-    }
-
-    const Link<V> *_levels() const {
-        return reinterpret_cast<const Link<V> *>(
-            reinterpret_cast<const char *>(this) + _PADDING + sizeof(*this));
-    }
-
-    Link<V> *_levels() {
-        return reinterpret_cast<Link<V> *>(
-            reinterpret_cast<char *>(this) + _PADDING + sizeof(*this));
-    }
-
-    Link<V> &_levels(std::size_t i) {
-        return _levels()[i];
-    }
-
-protected:
-    template <typename T, typename Iter>
-    static UniquePtr cons(UniquePtr &&head, T &&value, std::size_t height, Iter iter) {
-        if (head) assert(!head->prev());
-        auto result = _make(std::forward<T>(value), height, nullptr, std::move(head), iter);
-        assert(result);
-        return result;
-    }
-
-    template <typename T, typename Iter>
-    Node &emplace_after(T &&value, std::size_t height, Iter iter) {
-        if (next()) next()->_prev = nullptr;
-        try {
-            _make(std::forward<T>(value), height, this, std::move(_next), iter);
-        } catch (...) {
-            if (next()) next()->_prev = this;
-            throw;
-        }
-        return *next();
-    }
-
-    static UniquePtr remove_head(UniquePtr head) {
-        if (!head) return nullptr;
-        assert(!head->prev());
-        for (std::size_t i = head->height(); i > 0; --i) {
-            auto &level = head->_levels(i - 1);
-            assert(!level.prev);
-            if (level.next) {
-                level.next->_levels(i - 1).prev = nullptr;
-                level.next = nullptr;
-            }
-        }
-        if (head->next()) head->next()->_prev = nullptr;
-        return std::move(head->_next);
-    }
-
-    void remove_next() {
-        if (!next()) return;
-        for (std::size_t i = next()->height(); i > 0; --i) {
-            auto &level = next()->_levels(i - 1);
-            if (level.prev) {
-                level.prev->_levels(i - 1).next = level.next;
-            }
-            if (level.next) {
-                level.next->_levels(i - 1).prev = level.prev;
-            }
-            level = {};
-        }
-        next()->_prev = nullptr;
-        auto n = remove_head(std::move(_next));
-        if (n) n->_prev = this;
-        _next = std::move(n);
-    }
-
-    template <typename, typename>
-    friend class Map;
-
-public:
-    constexpr const V &value() const {
-        return _value;
-    }
-
-    constexpr V &value() {
-        return _value;
-    }
-
-    constexpr std::size_t height() const {
-        return _height;
-    }
-
-    constexpr Node *prev() const {
-        return _prev;
-    }
-
-    Node *next() const {
-        return _next.get();
-    }
-
-    const Link<V> &levels(std::size_t i) const {
-        return _levels()[i];
-    }
-};
-
-template <typename V>
-struct Link {
-    Node<V> *prev;
-    Node<V> *next;
-};
-
-template <typename V>
-class Iter : public std::iterator<std::bidirectional_iterator_tag, V> {
-    static constexpr Node<V> *_DEFAULT_LAST = nullptr;
-
-    std::reference_wrapper<Node<V> *const> _last;
-    Node<V> *_node;
-
-    template <typename T>
-    friend constexpr bool operator==(const Iter<T> &, const Iter<T> &);
-
-protected:
-    constexpr explicit Iter(std::reference_wrapper<Node<V> *const> last, Node<V> *node)
-        : _last{last}, _node{node} {}
-
-    constexpr Node<V> *node() const {
-        return _node;
-    }
-
-    template <typename, typename>
-    friend class Map;
-
-public:
-    constexpr Iter() : Iter{_DEFAULT_LAST, nullptr} {}
-    Iter(const Iter &) = default;
-    ~Iter() = default;
-    Iter &operator=(const Iter &) = default;
-
-    Iter &operator++() {
-        _node = _node->next();
-        return *this;
-    }
-
-    Iter operator++(int) {
-        auto tmp = *this;
-        ++*this;
-        return tmp;
-    }
-
-    Iter &operator--() {
-        _node = _node ? _node->prev() : _last.get();
-        return *this;
-    }
-
-    Iter operator--(int) {
-        auto tmp = *this;
-        --*this;
-        return tmp;
-    }
-
-    V &operator*() const {
-        return _node->value();
-    }
-
-    V *operator->() const {
-        return &**this;
-    }
-};
-
-template <typename V>
-class ConstIter : public std::iterator<std::bidirectional_iterator_tag, const V> {
-    Iter<V> _iter;
-
-    template <typename T>
-    friend constexpr bool operator==(const ConstIter<T> &, const ConstIter<T> &);
-
-public:
-    constexpr ConstIter() = default;
-    ConstIter(const ConstIter &) = default;
-    constexpr ConstIter(const Iter<V> &iter) : _iter{iter} {}
-    ~ConstIter() = default;
-    ConstIter &operator=(const ConstIter &) = default;
-
-    ConstIter &operator++() {
-        ++_iter;
-        return *this;
-    }
-
-    ConstIter operator++(int) {
-        auto tmp = *this;
-        ++*this;
-        return tmp;
-    }
-
-    ConstIter &operator--() {
-        --_iter;
-        return *this;
-    }
-
-    ConstIter operator--(int) {
-        auto tmp = *this;
-        --*this;
-        return tmp;
-    }
-
-    const V &operator*() const {
-        return *_iter;
-    }
-
-    const V *operator->() const {
-        return &**this;
-    }
-};
-
-template <typename V>
-constexpr bool operator==(const Iter<V> &i1, const Iter<V> &i2) {
-    constexpr auto fields = [] (auto &i) {
-        return std::make_pair(&i._last.get(), i._node);
-    };
-    return fields(i1) == fields(i2);
-}
-
-template <typename V>
-constexpr bool operator==(const ConstIter<V> &i1, const ConstIter<V> &i2) {
-    return i1._iter == i2._iter;
-}
-
-template <typename V>
-constexpr bool operator==(const Iter<V> &i1, const ConstIter<V> &i2) {
-    return ConstIter<V>{i1} == i2;
-}
-
-template <typename V>
-constexpr bool operator==(const ConstIter<V> &i1, const Iter<V> &i2) {
-    return i2 == i1;
-}
-
-template <typename V>
-constexpr bool operator!=(const Iter<V> &i1, const Iter<V> &i2) {
-    return !(i1 == i2);
-}
-
-template <typename V>
-constexpr bool operator!=(const ConstIter<V> &i1, const ConstIter<V> &i2) {
-    return !(i1 == i2);
-}
-
-template <typename V>
-constexpr bool operator!=(const Iter<V> &i1, const ConstIter<V> &i2) {
-    return !(i1 == i2);
-}
-
-template <typename V>
-constexpr bool operator!=(const ConstIter<V> &i1, const Iter<V> &i2) {
-    return !(i1 == i2);
-}
-
 // Wrapper that defaults on move
 template <typename T>
 struct DefaultOnMove {
@@ -378,193 +55,496 @@ struct DefaultOnMove {
     operator T () && {
         return std::move(value);
     }
+}; // template <typename> DefaultOnMove
+
+class Link {
+    struct _MovingLink {
+        Link &&link;
+        _MovingLink(Link &&link, Link &sentinel) : link{std::move(link)} {
+            link._prev.get()._next = link._next.get()._prev = std::ref(sentinel);
+        }
+        ~_MovingLink() {
+            link._prev = link._next = std::ref(link);
+        }
+    };
+
+    std::reference_wrapper<Link> _prev, _next;
+
+    Link(_MovingLink &&link) : _prev{link.link._prev}, _next{link.link._next} {}
+
+protected:
+    Link() : _prev{*this}, _next{*this} {}
+    Link(Link &&that) : Link{_MovingLink{std::move(that), *this}} {}
+
+    Link &operator=(Link &&that) {
+        _MovingLink moving_link{std::move(that), *this};
+        _prev = moving_link.link._prev;
+        _next = moving_link.link._next;
+        return *this;
+    }
+
+    void insert_before(Link &prev) {
+        _prev.get()._next = std::ref(prev);
+        prev._prev = _prev;
+        prev._next = std::ref(*this);
+        _prev = std::ref(prev);
+    }
+
+    void disconnect() {
+        _prev.get()._next = _next;
+        _next.get()._prev = _prev;
+        _prev = _next = std::ref(*this);
+    }
+
+    friend class Node;
+
+public:
+    Link &prev() const {
+        return _prev;
+    }
+
+    Link &next() const {
+        return _next;
+    }
+
+    bool empty() const {
+        return &next() == this;
+    }
+}; // class Link
+
+class Node;
+using NodeWithLink = std::pair<Node, Link>;
+
+class Node {
+    struct _MovingNode {
+        Node &&node;
+        _MovingNode(Node &&node, std::reference_wrapper<Node> sentinel) : node{std::move(node)} {
+            node._prev.get()._next = node._next.get()._prev = sentinel;
+        }
+        ~_MovingNode() {
+            node._prev = node._next = std::ref(node);
+        }
+    };
+
+    DefaultOnMove<std::size_t> _height;
+    std::reference_wrapper<Node> _prev, _next;
+
+    Node(_MovingNode &&node) :
+        _height{std::move(node.node._height)},
+        _prev{node.node._prev}, _next{node.node._next} {
+        for (std::size_t i = 0; i < _height; ++i) {
+            new (&links(i)) Link{std::move(node.node.links(i))};
+        }
+    }
+
+    Link &links(std::size_t i) {
+        return reinterpret_cast<Link *>(
+            reinterpret_cast<char *>(this)
+            + offsetof(NodeWithLink, second))[i];
+    }
+
+public:
+    Node(std::size_t max_height) : _height{max_height}, _prev{*this}, _next{*this} {
+        for (std::size_t i = 0; i < _height; ++i) {
+            new (&links(i)) Link;
+        }
+    }
+
+    Node(Node &&that) : Node{_MovingNode {std::move(that), *this}} {}
+
+    Node &operator=(Node &&that) {
+        _MovingNode moving_node{std::move(that), *this};
+        _height = std::move(moving_node.node._height);
+        _prev = moving_node.node._prev;
+        _next = moving_node.node._next;
+        for (std::size_t i = 0; i < _height; ++i) {
+            links(i) = std::move(moving_node.node.links(i));
+        }
+        return *this;
+    }
+
+    std::size_t &height() {
+        return _height;
+    }
+
+    const std::size_t &height() const {
+        return _height;
+    }
+
+    Node &prev() const {
+        return _prev;
+    }
+
+    Node &next() const {
+        return _next;
+    }
+
+    const Link &links(std::size_t i) const {
+        return reinterpret_cast<const Link *>(
+            reinterpret_cast<const char *>(this)
+            + offsetof(NodeWithLink, second))[i];
+    }
+
+    static Node &from_link(Link &link, std::size_t i) {
+        return *reinterpret_cast<Node *>(
+            reinterpret_cast<char *>(&link - i)
+            - offsetof(NodeWithLink, second));
+    }
+
+    static const Node &from_link(std::reference_wrapper<const Link> link, std::size_t i) {
+        return *reinterpret_cast<const Node *>(
+            reinterpret_cast<const char *>(&link.get() - i)
+            - offsetof(NodeWithLink, second));
+    }
+
+    template <typename LinkRefIter>
+    void insert_before(Node &prev, LinkRefIter link_iter) {
+        static_assert(
+            std::is_convertible<
+                typename std::iterator_traits<LinkRefIter>::reference,
+                Link &>::value,
+            "LinkRefIter's reference must be convertible to Link &");
+        _prev.get()._next = std::ref(prev);
+        prev._prev = _prev;
+        prev._next = std::ref(*this);
+        _prev = std::ref(prev);
+        for (std::size_t i = 0; i < prev._height; ++i) {
+            static_cast<Link &>(*link_iter).insert_before(prev.links(i));
+            ++link_iter;
+        }
+    }
+
+    void disconnect() {
+        for (std::size_t i = _height; i > 0; --i) {
+            links(i - 1).disconnect();
+        }
+        _prev.get()._next = _next;
+        _next.get()._prev = _prev;
+        _prev = _next = std::ref(*this);
+    }
+}; // class Node
+
+template <bool Const, typename T>
+using ConstOrMutT = std::conditional_t<Const, const T, std::remove_const_t<T>>;
+
+template <typename>
+struct MapArrayImpl;
+
+template <std::size_t... I>
+struct MapArrayImpl<std::index_sequence<I...>> {
+    template <typename F, typename T, std::size_t N>
+    static std::array<std::result_of_t<F(T &)>, N> call(
+        const F &f, std::array<T, N> &xs) {
+        return {f(std::get<I>(xs))...};
+    }
 };
+
+template <typename F, typename T, std::size_t N>
+auto map_array(const F &f, std::array<T, N> &xs) {
+    return MapArrayImpl<std::make_index_sequence<N>>::call(f, xs);
+}
+
+class FreeNode {
+    struct _Deleter {
+        void operator()(FreeNode *node) {
+            node->~FreeNode();
+            delete[] reinterpret_cast<char *>(node);
+        }
+    };
+
+public:
+    using UniquePtr = std::unique_ptr<FreeNode, _Deleter>;
+
+private:
+    FreeNode() noexcept = default;
+
+    ~FreeNode() {
+        while (next) {
+            next = std::move(next->next);
+        }
+    }
+
+public:
+    UniquePtr next;
+
+    static UniquePtr make(std::size_t size) {
+        assert(size >= sizeof(FreeNode));
+        return UniquePtr {new(new char[size]) FreeNode};
+    }
+
+    template <typename T, typename... Args>
+    static T &use(UniquePtr &head, Args &&...args) {
+        assert(head);
+        auto next = std::move(head->next);
+        auto space = std::move(head);
+        try {
+            auto &result = *new(&*space) T {std::forward<Args>(args)...};
+            space.release();
+            head = std::move(next);
+            return result;
+        } catch (...) {
+            head = std::move(space);
+            head->next = std::move(next);
+            throw;
+        }
+    }
+
+    template <typename T>
+    static UniquePtr release(T &space) {
+        space.~T();
+        return UniquePtr {new(&space) FreeNode};
+    }
+}; // class FreeNode
 } // anonymous namespace
 
 template <typename K, typename M>
 class Map {
 public:
     using ValueType = std::pair<const K, M>;
-    using Iterator = Iter<ValueType>;
-    using ConstIterator = ConstIter<ValueType>;
+
+private:
+    template <bool Const>
+    class _Iter : public std::iterator<
+        std::bidirectional_iterator_tag,
+        ValueType,
+        std::ptrdiff_t,
+        ConstOrMutT<Const, ValueType> *,
+        ConstOrMutT<Const, ValueType> &>  {
+        ConstOrMutT<Const, Node> *_node;
+
+        friend constexpr bool operator==(const _Iter &i1, const _Iter &i2) {
+            return i1._node == i2._node;
+        }
+
+        friend constexpr bool operator!=(const _Iter &i1, const _Iter &i2) {
+            return !(i1 == i2);
+        }
+
+    protected:
+        constexpr _Iter(ConstOrMutT<Const, Node> &node) : _node{&node} {}
+
+        constexpr ConstOrMutT<Const, Node> &node() const {
+            return *_node;
+        }
+
+        friend class Map;
+
+    public:
+        constexpr _Iter() : _node{} {}
+        constexpr _Iter(const _Iter<false> &that) : _node{that._node} {}
+
+        _Iter &operator++() {
+            _node = &_node->next();
+            return *this;
+        }
+
+        _Iter operator++(int) {
+            auto tmp = *this;
+            ++*this;
+            return tmp;
+        }
+
+        _Iter &operator--() {
+            _node = &_node->prev();
+            return *this;
+        }
+
+        _Iter operator--(int) {
+            auto tmp = *this;
+            --*this;
+            return tmp;
+        }
+
+        ConstOrMutT<Const, ValueType> &operator*() const {
+            return *reinterpret_cast<ConstOrMutT<Const, ValueType> *>(
+                reinterpret_cast<ConstOrMutT<Const, char> *>(_node)
+                - offsetof(_DereferenceableNode, node));
+        }
+
+        ConstOrMutT<Const, ValueType> *operator->() const {
+            return &**this;
+        }
+    }; // template <bool> class _Iter
+
+public:
+    using Iterator = _Iter<false>;
+    using ConstIterator = _Iter<true>;
     using ReverseIterator = std::reverse_iterator<Iterator>;
 
 private:
-    static constexpr auto MAX_HEIGHT = 31;
-    using _Links = std::array<Link<ValueType>, MAX_HEIGHT>;
+    static constexpr std::size_t _MAX_HEIGHT = 31;
+    using _LinkRefs = std::array<std::reference_wrapper<Link>, _MAX_HEIGHT>;
+
+    struct _DereferenceableNode {
+        ValueType value;
+        Node node;
+
+        template <typename V>
+        _DereferenceableNode(V &&value, std::size_t height) :
+            value{std::forward<V>(value)}, node{height} {}
+    };
+    using _DereferenceableNodeWithLink = std::pair<_DereferenceableNode, Link>;
+
     class _SearchResult {
         Iterator _iter;
-        _Links _links;
+        union {
+            _LinkRefs _link_refs;
+        };
         bool _found;
 
     public:
         explicit _SearchResult(Iterator iter) : _iter{iter}, _found{true} {}
 
-        explicit _SearchResult(Iterator iter, _Links links)
-            : _iter{iter}, _links{links}, _found{false} {}
-
-        constexpr const Iterator &iter() const {
-            return _iter;
-        }
+        explicit _SearchResult(Iterator iter, _LinkRefs link_refs)
+            : _iter{iter}, _link_refs{link_refs}, _found{false} {}
 
         template <typename F, typename G>
         auto match(F &&found, G &&missing) const {
             return _found
                 ? std::forward<F>(found)(_iter)
-                : std::forward<G>(missing)(_iter, _links.begin());
+                : std::forward<G>(missing)(_iter, _link_refs.begin());
         }
     };
 
-    typename Node<ValueType>::UniquePtr _head;
-    std::array<DefaultOnMove<Node<ValueType> *>, MAX_HEIGHT> _level_heads;
-    DefaultOnMove<Node<ValueType> *> _last;
-    std::array<DefaultOnMove<Node<ValueType> *>, MAX_HEIGHT> _level_lasts;
+    Node _sentinel;
+    union {
+        // _sentinel will assume it constructs these links.
+        std::array<Link, _MAX_HEIGHT> _links;
+    };
     DefaultOnMove<std::size_t> _size;
-    DefaultOnMove<std::size_t> _height;
     std::default_random_engine _random;
     std::bernoulli_distribution _flip_coin;
+    std::array<FreeNode::UniquePtr, _MAX_HEIGHT + 1> _free_nodes;
 
-    Iterator _iter(Node<ValueType> *node) const {
-        return Iterator {std::cref(_last.value), node};
+    static Iterator _iter(Node &node) {
+        return node;
     }
 
-    Iterator _begin() const {
-        return _iter(_head.get());
+    static ConstIterator _iter(const Node &node) {
+        return node;
     }
 
-    Iterator _end() const {
-        return _iter(nullptr);
+    template <typename This>
+    static auto _begin(This &&map) {
+        return _iter(map._sentinel.next());
     }
 
-    template <typename Key>
-    _SearchResult _lower_bound(const Key &key) const {
-        _Links links{};
+    template <typename This>
+    static auto _end(This &&map) {
+        return _iter(map._sentinel);
+    }
 
-        if (!_last || _last.value->value().first < key) {
-            std::transform(_level_lasts.begin(), _level_lasts.end(), links.begin(),
-                           [] (auto last) { return Link<ValueType> {last, nullptr }; });
-            return _SearchResult {_end(), links};
+    _SearchResult _lower_bound(const K &key) {
+        _LinkRefs link_refs = map_array([] (auto &x) {
+            return std::ref(x);
+        }, _links);
+
+        if (empty() || Iterator {_sentinel.prev()}->first < key) {
+            return _SearchResult {end(), link_refs};
         }
 
-        for (auto i = _height; i > 0; --i) {
-            auto &link = links[i - 1];
-            link = i == _height || !links[i].prev
-                ? Link<ValueType> {nullptr, _level_heads[i - 1]}
-                : Link<ValueType> {links[i].prev, links[i].prev->levels(i - 1).next};
-            while (link.next && link.next->value().first < key) {
-                if (link.next->value().first == key) {
-                    return _SearchResult {_iter(link.next)};
+        for (auto i = _sentinel.height(); i > 0; --i) {
+            auto &link_ref = link_refs[i - 1];
+            if (i < _sentinel.height()) {
+                link_ref = std::ref((&link_refs[i].get())[-1]);
+            }
+            while (true) {
+                Iterator iter{Node::from_link(link_ref.get().next(), i - 1)};
+                if (&link_ref.get().next() == &_links[i - 1] || key < iter->first) break;
+                if (iter->first == key) {
+                    return _SearchResult {iter};
                 }
-                link = {link.next, link.next->levels(i - 1).next};
+                link_ref = std::ref(link_ref.get().next());
             }
         }
-        auto begin = _height > 0 && links[0].prev
-            ? _iter(links[0].prev)
-            : _begin();
-        auto end = _end();
+
+        Iterator begin = _sentinel.height() == 0 || &link_refs[0].get() == &_links[0]
+            ? this->begin()
+            : Iterator {Node::from_link(link_refs[0], 0)};
+        auto end = this->end();
         auto result = std::find_if_not(begin, end, [&] (auto &value) {
             return value.first < key;
         });
         if (result != end && result->first == key) {
             return _SearchResult {result};
         }
-        return _SearchResult {result, links};
+        return _SearchResult {result, link_refs};
     }
 
-    template <typename Key>
-    Iterator _find(const Key &key) const {
-        return _lower_bound(key).match([] (auto iter) {
-            return iter;
-        }, [this] (auto, auto) {
-            return this->_end();
+    template <typename This>
+    static auto _find(This &&map, const K &key) {
+        using Iter = decltype(map.begin());
+
+        if (map.empty() || _iter(map._sentinel.prev())->first < key) {
+            return map.end();
+        }
+
+        Iter begin = map.begin();
+        if (map._sentinel.height() > 0) {
+            auto link_ref = std::ref(map._links[map._sentinel.height() - 1]);
+            for (auto i = map._sentinel.height(); i > 0; --i) {
+                if (i < map._sentinel.height()) {
+                    link_ref = std::ref((&link_ref.get())[-1]);
+                }
+                while (true) {
+                    Iter iter{Node::from_link(link_ref.get().next(), i - 1)};
+                    if (&link_ref.get().next() == &map._links[i - 1] || key < iter->first) break;
+                    if (iter->first == key) {
+                        return iter;
+                    }
+                    link_ref = decltype(link_ref) {link_ref.get().next()};
+                }
+            }
+            if (&link_ref.get() != &map._links[0]) {
+                begin = Iter {Node::from_link(link_ref, 0)};
+            }
+        }
+        auto end = map.end();
+        auto result = std::find_if_not(begin, end, [&] (auto &value) {
+            return value.first < key;
         });
+        return result != end && result->first == key
+            ? result : end;
     }
 
-    template <typename Key>
-    M &_at(const Key &key) const {
-        auto iter = _find(key);
-        if (iter == _end()) {
+    template <typename This>
+    static auto &_at(This &&map, const K &key) {
+        auto iter = _find(std::forward<This>(map), key);
+        if (iter == map.end()) {
             throw std::out_of_range{"Not found"};
         }
         return iter->second;
     }
 
-    void _sync_level_lists(Node<ValueType> &node) {
-        for (std::size_t i = 0; i < node.height(); ++i) {
-            auto &level = node.levels(i);
-            if (!level.prev) {
-                assert(level.next == _level_heads[i]);
-                if (_level_heads[i]) assert(_level_heads[i].value->levels(i).prev == &node);
-                _level_heads[i] = &node;
-            }
-            if (!level.next) {
-                assert(level.prev == _level_lasts[i]);
-                _level_lasts[i] = &node;
-            }
+    auto &_find_free_node(std::size_t height) {
+        for (auto i = height; i <= _MAX_HEIGHT; ++i) {
+            if (_free_nodes[i]) return _free_nodes[i];
         }
+        auto free_node = FreeNode::make(
+            sizeof(_DereferenceableNode)
+            + offsetof(_DereferenceableNodeWithLink, second)
+            + height * sizeof(Link));
+        free_node->next = std::move(_free_nodes[height]);
+        _free_nodes[height] = std::move(free_node);
+        return _free_nodes[height];
     }
 
-    template <typename LinkIter, typename V>
-    Iterator _insert_before(Iterator iter, LinkIter link_iter, V &&value) {
-        DefaultOnMove<std::size_t> height;
-        for (; height < MAX_HEIGHT && _flip_coin(_random); ++height);
+    template <typename LinkRefIter, typename V>
+    Iterator _insert_before(Iterator iter, LinkRefIter link_iter, V &&value) {
+        std::size_t height = 0;
+        for (; height < _MAX_HEIGHT && _flip_coin(_random); ++height);
 
-        auto next = iter.node();
-        Node<ValueType> *node;
-        if (next == _head.get()) {
-            _head = Node<ValueType>::cons(
-                std::move(_head), std::forward<V>(value), height, link_iter);
-            _sync_level_lists(*_head);
-            if (empty()) {
-                assert(!_last);
-                _last = &*_head;
-            }
-            node = &*_head;
-        } else {
-            auto prev = next ? next->prev() : _last.value;
-            assert(prev);
-            auto &result = prev->emplace_after(std::forward<V>(value), height, link_iter);
-            _sync_level_lists(result);
-            if (!result.next()) {
-                assert(result.prev() == _last);
-                assert(_last);
-                assert(_last.value->next() == &result);
-                _last = &result;
-            }
-            node = &result;
-        }
-
+        auto &node = FreeNode::use<_DereferenceableNode>(
+            _find_free_node(height), std::forward<V>(value), height);
+        iter.node().insert_before(node.node, link_iter);
         ++_size;
-        _height = std::max(_height, height);
-        return _iter(node);
+        _sentinel.height() = std::max(_sentinel.height(), height);
+        return node.node;
     }
 
     template <typename V>
     auto _insert_at_end(V &&value) {
-        class LastIter : public std::iterator<
-            std::input_iterator_tag, const Link<ValueType>> {
-            typename decltype(_level_lasts)::const_iterator _iter;
-
-        public:
-            LastIter(decltype(_iter) iter) : _iter{iter} {}
-
-            Link<ValueType> operator*() const {
-                return {*_iter, nullptr};
-            }
-
-            LastIter &operator++() {
-                ++_iter;
-                return *this;
-            }
-
-            LastIter operator++(int) {
-                auto tmp = *this;
-                ++*this;
-                return tmp;
-            }
-        };
-        return _insert_before(
-            _end(), LastIter {_level_lasts.begin()}, std::forward<V>(value));
+        return _insert_before(end(), _links.begin(), std::forward<V>(value));
     }
 
     template <typename Key>
@@ -593,9 +573,11 @@ private:
 
 public:
     Map() :
-        _head{}, _level_heads{},
-        _last{}, _level_lasts{}, _size{}, _height{},
-        _random{std::random_device {}()}, _flip_coin{} {}
+        _sentinel{_MAX_HEIGHT}, _size{},
+        _random{std::random_device {}()}, _flip_coin{},
+        _free_nodes{} {
+        _sentinel.height() = 0;
+    }
 
     Map(const Map &that) : Map{} {
         for (auto &value : that) {
@@ -621,7 +603,9 @@ public:
 
     Map &operator=(Map &&that) = default;
 
-    ~Map() = default;
+    ~Map() {
+        clear();
+    }
 
     constexpr std::size_t size() const {
         return _size;
@@ -632,19 +616,19 @@ public:
     }
 
     Iterator begin() {
-        return _begin();
+        return _begin(*this);
     }
 
     Iterator end() {
-        return _end();
+        return _end(*this);
     }
 
     ConstIterator begin() const {
-        return _begin();
+        return _begin(*this);
     }
 
     ConstIterator end() const {
-        return _end();
+        return _end(*this);
     }
 
     ReverseIterator rbegin() {
@@ -655,24 +639,20 @@ public:
         return std::make_reverse_iterator(begin());
     }
 
-    template <typename Key>
-    Iterator find(const Key &key) {
-        return _find(key);
+    Iterator find(const K &key) {
+        return _find(*this, key);
     }
 
-    template <typename Key>
-    ConstIterator find(const Key &key) const {
-        return _find(key);
+    ConstIterator find(const K &key) const {
+        return _find(*this, key);
     }
 
-    template <typename Key>
-    M &at(const Key &key) {
-        return _at(key);
+    M &at(const K &key) {
+        return _at(*this, key);
     }
 
-    template <typename Key>
-    const M &at(const Key &key) const {
-        return _at(key);
+    const M &at(const K &key) const {
+        return _at(*this, key);
     }
 
     M &operator[](const K &key) {
@@ -699,36 +679,18 @@ public:
     }
 
     void erase(Iterator iter) {
-        auto node = iter.node();
-
-        for (std::size_t i = node->height(); i > 0; --i) {
-            auto &level = node->levels(i - 1);
-            if (!level.next) {
-                assert(_level_lasts[i - 1] == node);
-                _level_lasts[i - 1] = level.prev;
-            }
-            if (!level.prev) {
-                assert(_level_heads[i - 1] == node);
-                _level_heads[i - 1] = level.next;
-            }
+        auto &node = iter.node();
+        auto height = node.height();
+        node.disconnect();
+        auto free_node = FreeNode::release(*reinterpret_cast<_DereferenceableNode *>(
+            reinterpret_cast<char *>(&node)
+            - offsetof(_DereferenceableNode, node)));
+        free_node->next = std::move(_free_nodes[height]);
+        _free_nodes[height] = std::move(free_node);
+        if (height == _sentinel.height()) {
+            for (; _sentinel.height() > 0 && _links[_sentinel.height() - 1].empty();
+                --_sentinel.height());
         }
-        if (node->height() == _height) {
-            // We may have decreased the height
-            for (; _height > 0 && !_level_heads[_height - 1]; --_height);
-        }
-        if (node == _last) {
-            _last = node->prev();
-        }
-
-        auto prev = node->prev();
-        if (prev) {
-            assert(prev->next() == node);
-            prev->remove_next();
-        } else {
-            assert(_head.get() == node);
-            _head = Node<ValueType>::remove_head(std::move(_head));
-        }
-
         --_size;
     }
 
@@ -742,12 +704,9 @@ public:
     }
 
     void clear() {
-        _head = nullptr;
-        _level_heads.fill(nullptr);
-        _last = nullptr;
-        _level_lasts.fill(nullptr);
-        _size = 0;
-        _height = 0;
+        while (!empty()) {
+            erase(begin());
+        }
     }
 }; // template <typename, typename> class Map
 
