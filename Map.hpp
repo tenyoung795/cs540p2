@@ -243,58 +243,6 @@ template <typename F, typename T, std::size_t N>
 auto map_array(const F &f, std::array<T, N> &xs) {
     return MapArrayImpl<std::make_index_sequence<N>>::call(f, xs);
 }
-
-class FreeNode {
-    struct _Deleter {
-        void operator()(FreeNode *node) {
-            node->~FreeNode();
-            delete[] reinterpret_cast<char *>(node);
-        }
-    };
-
-public:
-    using UniquePtr = std::unique_ptr<FreeNode, _Deleter>;
-
-private:
-    FreeNode() noexcept = default;
-
-    ~FreeNode() {
-        while (next) {
-            next = std::move(next->next);
-        }
-    }
-
-public:
-    UniquePtr next;
-
-    static UniquePtr make(std::size_t size) {
-        assert(size >= sizeof(FreeNode));
-        return UniquePtr {new(new char[size]) FreeNode};
-    }
-
-    template <typename T, typename... Args>
-    static T &use(UniquePtr &head, Args &&...args) {
-        assert(head);
-        auto next = std::move(head->next);
-        auto space = std::move(head);
-        try {
-            auto &result = *new(&*space) T {std::forward<Args>(args)...};
-            space.release();
-            head = std::move(next);
-            return result;
-        } catch (...) {
-            head = std::move(space);
-            head->next = std::move(next);
-            throw;
-        }
-    }
-
-    template <typename T>
-    static UniquePtr release(T &space) {
-        space.~T();
-        return UniquePtr {new(&space) FreeNode};
-    }
-}; // class FreeNode
 } // anonymous namespace
 
 template <typename K, typename M>
@@ -414,7 +362,6 @@ private:
     DefaultOnMove<std::size_t> _size;
     std::default_random_engine _random;
     std::bernoulli_distribution _flip_coin;
-    std::array<FreeNode::UniquePtr, _MAX_HEIGHT + 1> _free_nodes;
 
     static Iterator _iter(Node &node) {
         return node;
@@ -516,17 +463,15 @@ private:
         return iter->second;
     }
 
-    auto &_find_free_node(std::size_t height) {
-        for (auto i = height; i <= _MAX_HEIGHT; ++i) {
-            if (_free_nodes[i]) return _free_nodes[i];
-        }
-        auto free_node = FreeNode::make(
-            sizeof(_DereferenceableNode)
+    template <typename V>
+    static auto &_new(V &&value, std::size_t height) {
+        auto size = sizeof(_DereferenceableNode)
             + offsetof(_DereferenceableNodeWithLink, second)
-            + height * sizeof(Link));
-        free_node->next = std::move(_free_nodes[height]);
-        _free_nodes[height] = std::move(free_node);
-        return _free_nodes[height];
+            + height * sizeof(Link);
+        auto space = std::make_unique<char[]>(size);
+        auto result = new(space.get()) _DereferenceableNode {std::forward<V>(value), height};
+        space.release();
+        return result->node;
     }
 
     template <typename LinkRefIter, typename V>
@@ -534,12 +479,11 @@ private:
         std::size_t height = 0;
         for (; height < _MAX_HEIGHT && _flip_coin(_random); ++height);
 
-        auto &node = FreeNode::use<_DereferenceableNode>(
-            _find_free_node(height), std::forward<V>(value), height);
-        iter.node().insert_before(node.node, link_iter);
+        auto &node = _new(std::forward<V>(value), height);
+        iter.node().insert_before(node, link_iter);
         ++_size;
         _sentinel.height() = std::max(_sentinel.height(), height);
-        return node.node;
+        return node;
     }
 
     template <typename V>
@@ -571,11 +515,18 @@ private:
         });
     }
 
+    static void _delete(Node &&node) {
+        auto &deref_node = *reinterpret_cast<_DereferenceableNode *>(
+            reinterpret_cast<char *>(&node)
+            - offsetof(_DereferenceableNode, node));
+        deref_node.~_DereferenceableNode();
+        delete[] reinterpret_cast<char *>(&deref_node);
+    }
+
 public:
     Map() :
         _sentinel{_MAX_HEIGHT}, _size{},
-        _random{std::random_device {}()}, _flip_coin{},
-        _free_nodes{} {
+        _random{std::random_device {}()}, _flip_coin{} {
         _sentinel.height() = 0;
     }
 
@@ -680,18 +631,13 @@ public:
 
     void erase(Iterator iter) {
         auto &node = iter.node();
-        auto height = node.height();
         node.disconnect();
-        auto free_node = FreeNode::release(*reinterpret_cast<_DereferenceableNode *>(
-            reinterpret_cast<char *>(&node)
-            - offsetof(_DereferenceableNode, node)));
-        free_node->next = std::move(_free_nodes[height]);
-        _free_nodes[height] = std::move(free_node);
-        if (height == _sentinel.height()) {
+        if (node.height() == _sentinel.height()) {
             for (; _sentinel.height() > 0 && _links[_sentinel.height() - 1].empty();
                 --_sentinel.height());
         }
         --_size;
+        _delete(std::move(node));
     }
 
     template <typename Key>
