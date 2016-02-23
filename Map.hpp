@@ -524,7 +524,7 @@ private:
     }
 
     template <typename This>
-    auto _index(This &&map, std::size_t i) const {
+    static auto _index(This &&map, std::size_t i) {
         if (i >= map.size()) return map.end();
         auto iter = map.begin();
         std::advance(iter, i);
