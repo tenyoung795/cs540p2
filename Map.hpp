@@ -144,7 +144,7 @@ class Node {
     }
 
 public:
-    Node(std::size_t max_height) : _height{max_height}, _prev{*this}, _next{*this} {
+    explicit Node(std::size_t max_height) : _height{max_height}, _prev{*this}, _next{*this} {
         for (std::size_t i = 0; i < _height; ++i) {
             new (&links(i)) Link;
         }
