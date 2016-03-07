@@ -171,11 +171,19 @@ public:
         return _height;
     }
 
-    Node &prev() const {
+    Node &prev() {
         return _prev;
     }
 
-    Node &next() const {
+    const Node &prev() const {
+        return _prev;
+    }
+
+    Node &next() {
+        return _next;
+    }
+
+    const Node &next() const {
         return _next;
     }
 
