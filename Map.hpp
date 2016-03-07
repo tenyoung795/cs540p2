@@ -99,11 +99,19 @@ protected:
     friend class Node;
 
 public:
-    Link &prev() const {
+    Link &prev() {
         return _prev;
     }
 
-    Link &next() const {
+    const Link &prev() const {
+        return _prev;
+    }
+
+    Link &next() {
+        return _next;
+    }
+
+    const Link &next() const {
         return _next;
     }
 
@@ -447,7 +455,7 @@ private:
                     if (iter->first == key) {
                         return iter;
                     }
-                    link_ref = decltype(link_ref) {link_ref.get().next()};
+                    link_ref = std::ref(link_ref.get().next());
                 }
             }
             if (&link_ref.get() != &map._links[0]) {
