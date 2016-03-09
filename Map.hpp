@@ -33,9 +33,11 @@ class Node;
 
 class Link {
     std::reference_wrapper<Node> _prev, _next;
+    std::size_t _num_skips_next;
 
 public:
-    explicit Link(Node &owner) : _prev{owner}, _next{owner} {}
+    explicit Link(Node &owner, std::size_t num_skips)
+        : _prev{owner}, _next{owner}, _num_skips_next{num_skips} {}
     Link(const Link &) = delete;
     Link(Link &&) = default;
     Link &operator=(const Link &) = delete;
@@ -57,9 +59,18 @@ public:
         return _next;
     }
 
-    void insert_before(Node &, std::size_t);
+    std::size_t num_skips_next() const {
+        return _num_skips_next;
+    }
+
+    void insert_before(Node &, std::size_t i, std::size_t num_skips);
     void disconnect(std::size_t);
 }; // class Link
+
+struct NodeInsertion {
+    std::reference_wrapper<Node> ref;
+    std::size_t num_skips;
+};
 
 class Node {
     std::reference_wrapper<Node> _prev, _next;
@@ -67,7 +78,11 @@ class Node {
 
 public:
     Node() : _prev{*this}, _next{*this}, _links{} {}
-    explicit Node(std::size_t);
+
+    explicit Node(std::size_t height) : Node{} {
+        grow(height, 0);
+    }
+
     Node(const Node &) = delete;
     Node(Node &&) = delete;
     Node &operator=(const Node &) = delete;
@@ -102,14 +117,16 @@ public:
         return _links.at(i);
     }
 
-    void grow(std::size_t);
+    void grow(std::size_t count, std::size_t width);
 
-    template <typename NodeRefIter>
-    void insert_before(Node &prev, Node &sentinel, NodeRefIter levels) noexcept {
+    template <typename InsertionIter>
+    void insert_before(Node &prev, std::size_t prev_index,
+                       Node &sentinel, std::size_t width,
+                       InsertionIter levels) noexcept {
         static_assert(std::is_convertible<
-            typename std::iterator_traits<NodeRefIter>::reference,
-            Node &>::value,
-            "NodeRefIter's reference type must be convertible to Node &");
+            typename std::iterator_traits<InsertionIter>::reference,
+            NodeInsertion>::value,
+            "InsertionIter's reference type must be convertible to NodeInsertion");
         _prev.get()._next = std::ref(prev);
         prev._prev = _prev;
         prev._next = std::ref(*this);
@@ -117,14 +134,15 @@ public:
         auto i = prev.height();
         auto last_height = sentinel.height();
         if (i > last_height) {
-            sentinel.grow(i - last_height);
+            sentinel.grow(i - last_height, width);
         }
         for (; i > last_height; --i) {
-            sentinel.links(i - 1).insert_before(prev, i - 1);
+            sentinel.links(i - 1).insert_before(prev, i - 1, prev_index);
         }
         for (; i > 0; --i) {
-            Node &level = *levels;
-            level.links(i - 1).insert_before(prev, i - 1);
+            NodeInsertion insertion = *levels;
+            insertion.ref.get().links(i - 1).insert_before(
+                prev, i - 1, insertion.num_skips);
             ++levels;
         }
     }
@@ -177,10 +195,31 @@ struct DefaultOnMove {
 template <bool Const, typename T>
 using ConstOrMutT = std::conditional_t<Const, const T, std::remove_const_t<T>>;
 
+template <typename T>
+class SelfIndirecting {
+    T _t;
+
+public:
+    SelfIndirecting(T &&t) : _t{std::move(t)} {}
+
+    T *operator->() {
+        return &_t;
+    }
+
+    const T *operator->() const {
+        return &_t;
+    }
+};
+
 class SentinelIter : public std::iterator<
     std::input_iterator_tag,
-    internal::Node> {
+    internal::NodeInsertion,
+    void,
+    SelfIndirecting<internal::NodeInsertion>,
+    internal::NodeInsertion> {
     using Node = internal::Node;
+    using NodeInsertion = internal::NodeInsertion;
+
     std::reference_wrapper<Node> _node;
 
 public:
@@ -190,16 +229,16 @@ public:
         return *this;
     }
 
-    Node &operator*() const {
-        return _node;
+    NodeInsertion operator*() const {
+        return {_node, 0};
     }
 
-    Node *operator->() const {
-        return &**this;
+    SelfIndirecting<NodeInsertion> operator->() const {
+        return **this;
     }
 
     friend bool operator==(const SentinelIter &i1, const SentinelIter &i2) {
-        return &*i1 == &*i2;
+        return &i1._node.get() == &i2._node.get();
     }
 
     friend bool operator!=(const SentinelIter &i1, const SentinelIter &i2) {
@@ -216,6 +255,7 @@ public:
 private:
     using Node = internal::Node;
     using Link = internal::Link;
+    using NodeInsertion = internal::NodeInsertion;
 
     template <bool Const>
     class _Iter : public std::iterator<
@@ -285,7 +325,7 @@ public:
     using ReverseIterator = std::reverse_iterator<Iterator>;
 
 private:
-    using _NodeRefs = std::vector<std::reference_wrapper<Node>>;
+    using _NodeInsertions = std::vector<NodeInsertion>;
 
     struct _DereferenceableNode : Node {
         ValueType value;
@@ -297,21 +337,23 @@ private:
 
     class _SearchResult {
         Iterator _iter;
-        _NodeRefs _node_refs;
+        std::size_t _index;
+        _NodeInsertions _insertions;
         bool _found;
 
     public:
-        explicit _SearchResult(Iterator iter)
-            : _iter{iter}, _node_refs{}, _found{true} {}
+        explicit _SearchResult(Iterator iter) :
+            _iter{iter}, _index{}, _insertions{}, _found{true} {}
 
-        explicit _SearchResult(Iterator iter, _NodeRefs &&node_refs)
-            : _iter{iter}, _node_refs{std::move(node_refs)}, _found{false} {}
+        explicit _SearchResult(Iterator iter,
+                               std::size_t index, _NodeInsertions &&insertions) :
+            _iter{iter}, _index{index}, _insertions{std::move(insertions)}, _found{false} {}
 
         template <typename F, typename G>
         auto match(F &&found, G &&missing) const {
             return _found
                 ? std::forward<F>(found)(_iter)
-                : std::forward<G>(missing)(_iter, _node_refs.begin());
+                : std::forward<G>(missing)(_iter, _index, _insertions.begin());
         }
     };
 
@@ -339,16 +381,18 @@ private:
     }
 
     _SearchResult _lower_bound(const K &key) {
-        _NodeRefs node_refs;
-        node_refs.reserve(_sentinel.height());
+        _NodeInsertions insertions;
+        insertions.reserve(_sentinel.height());
 
         if (empty() || Iterator {_sentinel.prev()}->first < key) {
-            node_refs.insert(
-                node_refs.end(), _sentinel.height(), std::ref(_sentinel));
-            return _SearchResult {end(), std::move(node_refs)};
+            insertions.insert(
+                insertions.end(),
+                _sentinel.height(), {std::ref(_sentinel), 0});
+            return _SearchResult {end(), _size, std::move(insertions)};
         }
 
         auto node_ref = std::ref(_sentinel);
+        auto index = SIZE_MAX;
         for (auto i = _sentinel.height(); i > 0; --i) {
             while (true) {
                 auto &next = node_ref.get().links(i - 1).next();
@@ -357,22 +401,31 @@ private:
                 if (iter->first == key) {
                     return _SearchResult {iter};
                 }
+                index += 1 + node_ref.get().links(i - 1).num_skips_next();
                 node_ref = std::ref(next);
             }
-            node_refs.push_back(node_ref);
+            insertions.push_back({node_ref, index});
+        }
+        for (auto &insertion : insertions) {
+            if (insertion.num_skips != SIZE_MAX) {
+                assert(index >= insertion.num_skips);
+            }
+            insertion.num_skips = index - insertion.num_skips;
         }
 
-        Iterator begin = &node_ref.get() == &_sentinel
+        Iterator iter = &node_ref.get() == &_sentinel
             ? this->begin()
-            : Iterator {node_refs.back()};
+            : Iterator {insertions.back().ref};
         auto end = this->end();
-        auto result = std::find_if_not(begin, end, [&] (auto &value) {
-            return value.first < key;
-        });
-        if (result != end && result->first == key) {
-            return _SearchResult {result};
+        if (index == SIZE_MAX) index = 0;
+        while (!(iter == end || key < iter->first)) {
+            if (key == iter->first) {
+                return _SearchResult {iter};
+            }
+            ++iter;
+            ++index;
         }
-        return _SearchResult {result, std::move(node_refs)};
+        return _SearchResult {iter, index, std::move(insertions)};
     }
 
     template <typename This>
@@ -415,21 +468,25 @@ private:
     }
 
     template <typename NodeRefIter, typename V>
-    Iterator _insert_before(Iterator iter, NodeRefIter levels, V &&value) {
+    Iterator _insert_before(Iterator iter, std::size_t index,
+                            NodeRefIter levels,
+                            V &&value) {
         std::size_t height = _height_generator(_random);
 
         auto unique_node = std::make_unique<_DereferenceableNode>(
             std::forward<V>(value), height);
         auto node = unique_node.release();
         assert(node);
-        iter.node().insert_before(*node, _sentinel, levels);
+        iter.node().insert_before(*node, index, _sentinel, _size, levels);
         ++_size;
         return *node;
     }
 
     template <typename V>
     auto _insert_at_end(V &&value) {
-        return _insert_before(end(), SentinelIter {_sentinel}, std::forward<V>(value));
+        return _insert_before(end(), _size,
+                              SentinelIter {_sentinel},
+                              std::forward<V>(value));
     }
 
     template <typename Key>
@@ -438,9 +495,9 @@ private:
                       "Mapped type must be default constructible");
         return _lower_bound(key).match([] (auto iter) {
             return iter;
-        }, [&, this] (auto iter, auto levels) {
+        }, [&, this] (auto iter, auto index, auto levels) {
             return this->_insert_before(
-                iter, levels,
+                iter, index, levels,
                 std::make_pair(std::forward<Key>(key), M{}));
         })->second;
     }
@@ -449,9 +506,9 @@ private:
     std::pair<Iterator, bool> _insert(V &&value) {
         return _lower_bound(value.first).match([] (auto iter) {
             return std::make_pair(iter, false);
-        }, [&, this] (auto iter, auto levels) {
+        }, [&, this] (auto iter, auto index, auto levels) {
             return std::make_pair(
-                this->_insert_before(iter, levels, std::forward<V>(value)),
+                this->_insert_before(iter, index, levels, std::forward<V>(value)),
                 true);
         });
     }
