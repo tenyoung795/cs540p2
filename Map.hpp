@@ -16,6 +16,123 @@
 #include <vector>
 
 namespace cs540 {
+namespace internal {
+class Node;
+class Link;
+}
+}
+
+namespace std {
+extern template class reference_wrapper<cs540::internal::Node>;
+extern template class geometric_distribution<size_t>;
+}
+
+namespace cs540 {
+namespace internal {
+class Node;
+
+class Link {
+    std::reference_wrapper<Node> _prev, _next;
+
+public:
+    explicit Link(Node &owner) : _prev{owner}, _next{owner} {}
+    Link(const Link &) = delete;
+    Link(Link &&) = default;
+    Link &operator=(const Link &) = delete;
+    Link &operator=(Link &&) = default;
+
+    Node &prev() {
+        return _prev;
+    }
+
+    const Node &prev() const {
+        return _prev;
+    }
+
+    Node &next() {
+        return _next;
+    }
+
+    const Node &next() const {
+        return _next;
+    }
+
+    void insert_before(Node &, std::size_t);
+    void disconnect(std::size_t);
+}; // class Link
+
+class Node {
+    std::reference_wrapper<Node> _prev, _next;
+    std::vector<Link> _links;
+
+public:
+    Node() : _prev{*this}, _next{*this}, _links{} {}
+    explicit Node(std::size_t);
+    Node(const Node &) = delete;
+    Node(Node &&) = delete;
+    Node &operator=(const Node &) = delete;
+    Node &operator=(Node &&) = delete;
+    virtual ~Node();
+
+    std::size_t height() const {
+        return _links.size();
+    }
+
+    Node &prev() {
+        return _prev;
+    }
+
+    const Node &prev() const {
+        return _prev;
+    }
+
+    Node &next() {
+        return _next;
+    }
+
+    const Node &next() const {
+        return _next;
+    }
+
+    Link &links(std::size_t i) {
+        return _links.at(i);
+    }
+
+    const Link &links(std::size_t i) const {
+        return _links.at(i);
+    }
+
+    void grow(std::size_t);
+
+    template <typename NodeRefIter>
+    void insert_before(Node &prev, Node &sentinel, NodeRefIter levels) noexcept {
+        static_assert(std::is_convertible<
+            typename std::iterator_traits<NodeRefIter>::reference,
+            Node &>::value,
+            "NodeRefIter's reference type must be convertible to Node &");
+        _prev.get()._next = std::ref(prev);
+        prev._prev = _prev;
+        prev._next = std::ref(*this);
+        _prev = std::ref(prev);
+        auto i = prev.height();
+        auto last_height = sentinel.height();
+        if (i > last_height) {
+            sentinel.grow(i - last_height);
+        }
+        for (; i > last_height; --i) {
+            sentinel.links(i - 1).insert_before(prev, i - 1);
+        }
+        for (; i > 0; --i) {
+            Node &level = *levels;
+            level.links(i - 1).insert_before(prev, i - 1);
+            ++levels;
+        }
+    }
+
+    void shrink() noexcept;
+}; // class Node
+} // namespace internal
+
 namespace {
 // Wrapper that defaults on move
 template <typename T>
@@ -57,154 +174,38 @@ struct DefaultOnMove {
     }
 }; // template <typename> DefaultOnMove
 
-class Node;
-
-class Link {
-    std::reference_wrapper<Node> _prev, _next;
-
-public:
-    explicit Link(Node &owner) : _prev{owner}, _next{owner} {}
-    Link(const Link &) = delete;
-    Link(Link &&) = default;
-    Link &operator=(const Link &) = delete;
-    Link &operator=(Link &&) = delete;
-
-    Node &prev() {
-        return _prev;
-    }
-
-    const Node &prev() const {
-        return _prev;
-    }
-
-    Node &next() {
-        return _next;
-    }
-
-    const Node &next() const {
-        return _next;
-    }
-
-    void insert_before(Node &, std::size_t);
-    void disconnect(std::size_t);
-}; // class Link
-
-class Node {
-    std::reference_wrapper<Node> _prev, _next;
-    std::vector<Link> _links;
-
-public:
-    Node() : _prev{*this}, _next{*this}, _links{} {}
-
-    explicit Node(std::size_t height) : Node{} {
-        _links.reserve(height);
-        for (std::size_t i = 0; i < height; ++i) {
-            _links.emplace_back(*this);
-        }
-    }
-
-    Node(const Node &) = delete;
-    Node(Node &&) = delete;
-    Node &operator=(const Node &) = delete;
-    Node &operator=(Node &&) = delete;
-
-    virtual ~Node() {
-        for (std::size_t i = 0; i < height(); ++i) {
-            _links[i].disconnect(i);
-        }
-        _prev.get()._next = _next;
-        _next.get()._prev = _prev;
-    }
-
-    std::size_t height() const {
-        return _links.size();
-    }
-
-    Node &prev() {
-        return _prev;
-    }
-
-    const Node &prev() const {
-        return _prev;
-    }
-
-    Node &next() {
-        return _next;
-    }
-
-    const Node &next() const {
-        return _next;
-    }
-
-    Link &links(std::size_t i) {
-        return _links.at(i);
-    }
-
-    const Link &links(std::size_t i) const {
-        return _links.at(i);
-    }
-
-    void grow(std::size_t count) {
-        for (std::size_t i = 0; i < count; ++i) {
-            _links.emplace_back(*this);
-        }
-    }
-
-    template <typename NodeRefIter>
-    void insert_before(Node &prev, Node &sentinel, NodeRefIter levels) noexcept {
-        static_assert(std::is_convertible<
-            typename std::iterator_traits<NodeRefIter>::reference,
-            Node &>::value,
-            "NodeRefIter's reference type must be convertible to Node &");
-        _prev.get()._next = std::ref(prev);
-        prev._prev = _prev;
-        prev._next = std::ref(*this);
-        _prev = std::ref(prev);
-        auto i = prev.height();
-        auto last_height = sentinel.height();
-        if (i > last_height) {
-            sentinel.grow(i - last_height);
-        }
-        for (; i > last_height; --i) {
-            sentinel.links(i - 1).insert_before(prev, i - 1);
-        }
-        for (; i > 0; --i) {
-            Node &level = *levels;
-            level.links(i - 1).insert_before(prev, i - 1);
-            ++levels;
-        }
-    }
-
-    void shrink() noexcept {
-        for (auto i = height(); i > 0; --i) {
-            auto &back = _links.back();
-            if (&back.next() != this) {
-                break;
-            }
-            _links.pop_back();
-        }
-    }
-}; // class Node
-
-// Must define these methods after Node's definition.
-
-void Link::insert_before(Node &prev, std::size_t i) {
-    auto owner = _prev.get().links(i)._next;
-    _prev.get().links(i)._next = std::ref(prev);
-    prev.links(i)._prev = _prev;
-    prev.links(i)._next = owner;
-    _prev = std::ref(prev);
-}
-
-void Link::disconnect(std::size_t i) {
-    auto owner = _prev.get().links(i)._next;
-    _prev.get().links(i)._next = _next;
-    _next.get().links(i)._prev = _prev;
-    _prev = _next = owner;
-}
-
 template <bool Const, typename T>
 using ConstOrMutT = std::conditional_t<Const, const T, std::remove_const_t<T>>;
+
+class SentinelIter : public std::iterator<
+    std::input_iterator_tag,
+    internal::Node> {
+    using Node = internal::Node;
+    std::reference_wrapper<Node> _node;
+
+public:
+    explicit SentinelIter(Node &node) : _node{node} {}
+
+    SentinelIter &operator++() {
+        return *this;
+    }
+
+    Node &operator*() const {
+        return _node;
+    }
+
+    Node *operator->() const {
+        return &**this;
+    }
+
+    friend bool operator==(const SentinelIter &i1, const SentinelIter &i2) {
+        return &*i1 == &*i2;
+    }
+
+    friend bool operator!=(const SentinelIter &i1, const SentinelIter &i2) {
+        return !(i1 == i2);
+    }
+};
 } // anonymous namespace
 
 template <typename K, typename M>
@@ -213,6 +214,9 @@ public:
     using ValueType = std::pair<const K, M>;
 
 private:
+    using Node = internal::Node;
+    using Link = internal::Link;
+
     template <bool Const>
     class _Iter : public std::iterator<
         std::bidirectional_iterator_tag,
@@ -425,34 +429,6 @@ private:
 
     template <typename V>
     auto _insert_at_end(V &&value) {
-        class SentinelIter : public std::iterator<
-            std::input_iterator_tag,
-            Node> {
-            std::reference_wrapper<Node> _node;
-
-        public:
-            constexpr explicit SentinelIter(Node &node) : _node{node} {}
-
-            constexpr SentinelIter &operator++() {
-                return *this;
-            }
-
-            constexpr Node &operator*() const {
-                return _node;
-            }
-
-            constexpr Node *operator->() const {
-                return &**this;
-            }
-
-            constexpr bool operator==(const SentinelIter &that) const {
-                return &**this == &*that;
-            }
-
-            constexpr bool operator!=(const SentinelIter &that) const {
-                return !(*this == that);
-            }
-        };
         return _insert_before(end(), SentinelIter {_sentinel}, std::forward<V>(value));
     }
 
