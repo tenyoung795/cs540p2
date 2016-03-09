@@ -566,8 +566,7 @@ public:
         --_size;
     }
 
-    template <typename Key>
-    void erase(const Key &key) {
+    void erase(const K &key) {
         auto iter = find(key);
         if (iter == end()) {
             throw std::out_of_range{"Not found"};
