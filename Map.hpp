@@ -281,7 +281,6 @@ public:
     using ReverseIterator = std::reverse_iterator<Iterator>;
 
 private:
-    static constexpr std::size_t _MAX_HEIGHT = 31;
     using _NodeRefs = std::vector<std::reference_wrapper<Node>>;
 
     struct _DereferenceableNode : Node {
@@ -315,7 +314,7 @@ private:
     Node _sentinel;
     std::size_t _size;
     std::default_random_engine _random;
-    std::bernoulli_distribution _flip_coin;
+    std::geometric_distribution<std::size_t> _height_generator;
 
     static Iterator _iter(Node &node) {
         return node;
@@ -413,8 +412,7 @@ private:
 
     template <typename NodeRefIter, typename V>
     Iterator _insert_before(Iterator iter, NodeRefIter levels, V &&value) {
-        std::size_t height = 0;
-        for (; height < _MAX_HEIGHT && _flip_coin(_random); ++height);
+        std::size_t height = _height_generator(_random);
 
         auto unique_node = std::make_unique<_DereferenceableNode>(
             std::forward<V>(value), height);
@@ -485,7 +483,7 @@ private:
 public:
     Map() :
         _sentinel{}, _size{},
-        _random{std::random_device {}()}, _flip_coin{} {
+        _random{std::random_device {}()}, _height_generator{} {
     }
 
     Map(const Map &that) : Map{} {
