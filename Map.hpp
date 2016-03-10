@@ -114,17 +114,17 @@ public:
         prev._prev = _prev;
         prev._next = std::ref(*this);
         _prev = std::ref(prev);
-        auto i = prev.height();
         auto last_height = sentinel.height();
-        if (i > last_height) {
-            sentinel.grow(i - last_height);
+        if (prev.height() > last_height) {
+            sentinel.grow(prev.height() - last_height);
+            for (auto i = prev.height(); i < last_height; ++i) {
+                sentinel.links(i).insert_before(prev, i);
+            }
         }
-        for (; i > last_height; --i) {
-            sentinel.links(i - 1).insert_before(prev, i - 1);
-        }
-        for (; i > 0; --i) {
+        auto min = std::min(last_height, prev.height());
+        for (std::size_t i = 0; i < min; ++i) {
             Node &level = *levels;
-            level.links(i - 1).insert_before(prev, i - 1);
+            level.links(i).insert_before(prev, i);
             ++levels;
         }
     }
@@ -311,7 +311,7 @@ private:
         auto match(F &&found, G &&missing) const {
             return _found
                 ? std::forward<F>(found)(_iter)
-                : std::forward<G>(missing)(_iter, _node_refs.begin());
+                : std::forward<G>(missing)(_iter, _node_refs.rbegin());
         }
     };
 
