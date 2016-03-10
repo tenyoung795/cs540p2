@@ -5,6 +5,7 @@
 #include <cstddef>
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <memory>
 #include <random>
@@ -13,126 +14,8 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace cs540 {
-namespace internal {
-class Node;
-class Link;
-}
-}
-
-namespace std {
-extern template class reference_wrapper<cs540::internal::Node>;
-extern template class geometric_distribution<size_t>;
-}
-
-namespace cs540 {
-namespace internal {
-class Node;
-
-class Link {
-    std::reference_wrapper<Node> _prev, _next;
-
-public:
-    explicit Link(Node &owner) : _prev{owner}, _next{owner} {}
-    Link(const Link &) = delete;
-    Link(Link &&) = default;
-    Link &operator=(const Link &) = delete;
-    Link &operator=(Link &&) = default;
-
-    Node &prev() {
-        return _prev;
-    }
-
-    const Node &prev() const {
-        return _prev;
-    }
-
-    Node &next() {
-        return _next;
-    }
-
-    const Node &next() const {
-        return _next;
-    }
-
-    void insert_before(Node &, std::size_t);
-    void disconnect(std::size_t);
-}; // class Link
-
-class Node {
-    std::reference_wrapper<Node> _prev, _next;
-    std::vector<Link> _links;
-
-public:
-    Node() : _prev{*this}, _next{*this}, _links{} {}
-    explicit Node(std::size_t);
-    Node(const Node &) = delete;
-    Node(Node &&) = delete;
-    Node &operator=(const Node &) = delete;
-    Node &operator=(Node &&) = delete;
-    virtual ~Node();
-
-    std::size_t height() const {
-        return _links.size();
-    }
-
-    Node &prev() {
-        return _prev;
-    }
-
-    const Node &prev() const {
-        return _prev;
-    }
-
-    Node &next() {
-        return _next;
-    }
-
-    const Node &next() const {
-        return _next;
-    }
-
-    Link &links(std::size_t i) {
-        return _links.at(i);
-    }
-
-    const Link &links(std::size_t i) const {
-        return _links.at(i);
-    }
-
-    void grow(std::size_t);
-
-    template <typename NodeRefIter>
-    void insert_before(Node &prev, Node &sentinel, NodeRefIter levels) noexcept {
-        static_assert(std::is_convertible<
-            typename std::iterator_traits<NodeRefIter>::reference,
-            Node &>::value,
-            "NodeRefIter's reference type must be convertible to Node &");
-        _prev.get()._next = std::ref(prev);
-        prev._prev = _prev;
-        prev._next = std::ref(*this);
-        _prev = std::ref(prev);
-        auto last_height = sentinel.height();
-        if (prev.height() > last_height) {
-            sentinel.grow(prev.height() - last_height);
-            for (auto i = prev.height(); i < last_height; ++i) {
-                sentinel.links(i).insert_before(prev, i);
-            }
-        }
-        auto min = std::min(last_height, prev.height());
-        for (std::size_t i = 0; i < min; ++i) {
-            Node &level = *levels;
-            level.links(i).insert_before(prev, i);
-            ++levels;
-        }
-    }
-
-    void shrink() noexcept;
-}; // class Node
-} // namespace internal
-
 namespace {
 // Wrapper that defaults on move
 template <typename T>
@@ -174,38 +57,208 @@ struct DefaultOnMove {
     }
 }; // template <typename> DefaultOnMove
 
-template <bool Const, typename T>
-using ConstOrMutT = std::conditional_t<Const, const T, std::remove_const_t<T>>;
+class Link {
+    struct _MovingLink {
+        Link &&link;
+        _MovingLink(Link &&link, Link &sentinel) : link{std::move(link)} {
+            link._prev.get()._next = link._next.get()._prev = std::ref(sentinel);
+        }
+        ~_MovingLink() {
+            link._prev = link._next = std::ref(link);
+        }
+    };
 
-class SentinelIter : public std::iterator<
-    std::input_iterator_tag,
-    internal::Node> {
-    using Node = internal::Node;
-    std::reference_wrapper<Node> _node;
+    std::reference_wrapper<Link> _prev, _next;
 
-public:
-    explicit SentinelIter(Node &node) : _node{node} {}
+    Link(_MovingLink &&link) : _prev{link.link._prev}, _next{link.link._next} {}
 
-    SentinelIter &operator++() {
+protected:
+    Link() : _prev{*this}, _next{*this} {}
+    Link(Link &&that) : Link{_MovingLink{std::move(that), *this}} {}
+
+    Link &operator=(Link &&that) {
+        _MovingLink moving_link{std::move(that), *this};
+        _prev = moving_link.link._prev;
+        _next = moving_link.link._next;
         return *this;
     }
 
-    Node &operator*() const {
-        return _node;
+    void insert_before(Link &prev) {
+        _prev.get()._next = std::ref(prev);
+        prev._prev = _prev;
+        prev._next = std::ref(*this);
+        _prev = std::ref(prev);
     }
 
-    Node *operator->() const {
-        return &**this;
+    void disconnect() {
+        _prev.get()._next = _next;
+        _next.get()._prev = _prev;
+        _prev = _next = std::ref(*this);
     }
 
-    friend bool operator==(const SentinelIter &i1, const SentinelIter &i2) {
-        return &*i1 == &*i2;
+    friend class Node;
+
+public:
+    Link &prev() {
+        return _prev;
     }
 
-    friend bool operator!=(const SentinelIter &i1, const SentinelIter &i2) {
-        return !(i1 == i2);
+    const Link &prev() const {
+        return _prev;
+    }
+
+    Link &next() {
+        return _next;
+    }
+
+    const Link &next() const {
+        return _next;
+    }
+
+    bool empty() const {
+        return &next() == this;
+    }
+}; // class Link
+
+class Node;
+using NodeWithLink = std::pair<Node, Link>;
+
+class Node {
+    struct _MovingNode {
+        Node &&node;
+        _MovingNode(Node &&node, std::reference_wrapper<Node> sentinel) : node{std::move(node)} {
+            node._prev.get()._next = node._next.get()._prev = sentinel;
+        }
+        ~_MovingNode() {
+            node._prev = node._next = std::ref(node);
+        }
+    };
+
+    DefaultOnMove<std::size_t> _height;
+    std::reference_wrapper<Node> _prev, _next;
+
+    Node(_MovingNode &&node) :
+        _height{std::move(node.node._height)},
+        _prev{node.node._prev}, _next{node.node._next} {
+        for (std::size_t i = 0; i < _height; ++i) {
+            new (&links(i)) Link{std::move(node.node.links(i))};
+        }
+    }
+
+    Link &links(std::size_t i) {
+        return reinterpret_cast<Link *>(
+            reinterpret_cast<char *>(this)
+            + offsetof(NodeWithLink, second))[i];
+    }
+
+public:
+    explicit Node(std::size_t max_height) : _height{max_height}, _prev{*this}, _next{*this} {
+        for (std::size_t i = 0; i < _height; ++i) {
+            new (&links(i)) Link;
+        }
+    }
+
+    Node(Node &&that) : Node{_MovingNode {std::move(that), *this}} {}
+
+    Node &operator=(Node &&that) {
+        _MovingNode moving_node{std::move(that), *this};
+        _height = std::move(moving_node.node._height);
+        _prev = moving_node.node._prev;
+        _next = moving_node.node._next;
+        for (std::size_t i = 0; i < _height; ++i) {
+            links(i) = std::move(moving_node.node.links(i));
+        }
+        return *this;
+    }
+
+    std::size_t &height() {
+        return _height;
+    }
+
+    const std::size_t &height() const {
+        return _height;
+    }
+
+    Node &prev() {
+        return _prev;
+    }
+
+    const Node &prev() const {
+        return _prev;
+    }
+
+    Node &next() {
+        return _next;
+    }
+
+    const Node &next() const {
+        return _next;
+    }
+
+    const Link &links(std::size_t i) const {
+        return reinterpret_cast<const Link *>(
+            reinterpret_cast<const char *>(this)
+            + offsetof(NodeWithLink, second))[i];
+    }
+
+    static Node &from_link(Link &link, std::size_t i) {
+        return *reinterpret_cast<Node *>(
+            reinterpret_cast<char *>(&link - i)
+            - offsetof(NodeWithLink, second));
+    }
+
+    static const Node &from_link(std::reference_wrapper<const Link> link, std::size_t i) {
+        return *reinterpret_cast<const Node *>(
+            reinterpret_cast<const char *>(&link.get() - i)
+            - offsetof(NodeWithLink, second));
+    }
+
+    template <typename LinkRefIter>
+    void insert_before(Node &prev, LinkRefIter link_iter) {
+        static_assert(
+            std::is_convertible<
+                typename std::iterator_traits<LinkRefIter>::reference,
+                Link &>::value,
+            "LinkRefIter's reference must be convertible to Link &");
+        _prev.get()._next = std::ref(prev);
+        prev._prev = _prev;
+        prev._next = std::ref(*this);
+        _prev = std::ref(prev);
+        for (std::size_t i = 0; i < prev._height; ++i) {
+            static_cast<Link &>(*link_iter).insert_before(prev.links(i));
+            ++link_iter;
+        }
+    }
+
+    void disconnect() {
+        for (std::size_t i = _height; i > 0; --i) {
+            links(i - 1).disconnect();
+        }
+        _prev.get()._next = _next;
+        _next.get()._prev = _prev;
+        _prev = _next = std::ref(*this);
+    }
+}; // class Node
+
+template <bool Const, typename T>
+using ConstOrMutT = std::conditional_t<Const, const T, std::remove_const_t<T>>;
+
+template <typename>
+struct MapArrayImpl;
+
+template <std::size_t... I>
+struct MapArrayImpl<std::index_sequence<I...>> {
+    template <typename F, typename T, std::size_t N>
+    static std::array<std::result_of_t<F(T &)>, N> call(
+        const F &f, std::array<T, N> &xs) {
+        return {f(std::get<I>(xs))...};
     }
 };
+
+template <typename F, typename T, std::size_t N>
+auto map_array(const F &f, std::array<T, N> &xs) {
+    return MapArrayImpl<std::make_index_sequence<N>>::call(f, xs);
+}
 } // anonymous namespace
 
 template <typename K, typename M>
@@ -214,9 +267,6 @@ public:
     using ValueType = std::pair<const K, M>;
 
 private:
-    using Node = internal::Node;
-    using Link = internal::Link;
-
     template <bool Const>
     class _Iter : public std::iterator<
         std::bidirectional_iterator_tag,
@@ -270,8 +320,9 @@ private:
         }
 
         ConstOrMutT<Const, ValueType> &operator*() const {
-            return dynamic_cast<ConstOrMutT<Const, _DereferenceableNode> *>(
-                _node)->value;
+            return *reinterpret_cast<ConstOrMutT<Const, ValueType> *>(
+                reinterpret_cast<ConstOrMutT<Const, char> *>(_node)
+                - offsetof(_DereferenceableNode, node));
         }
 
         ConstOrMutT<Const, ValueType> *operator->() const {
@@ -285,38 +336,46 @@ public:
     using ReverseIterator = std::reverse_iterator<Iterator>;
 
 private:
-    using _NodeRefs = std::vector<std::reference_wrapper<Node>>;
+    static constexpr std::size_t _MAX_HEIGHT = 31;
+    using _LinkRefs = std::array<std::reference_wrapper<Link>, _MAX_HEIGHT>;
 
-    struct _DereferenceableNode : Node {
+    struct _DereferenceableNode {
         ValueType value;
+        Node node;
 
         template <typename V>
-        _DereferenceableNode(V &&value, std::size_t height)
-            : Node{height}, value{std::forward<V>(value)} {}
+        _DereferenceableNode(V &&value, std::size_t height) :
+            value{std::forward<V>(value)}, node{height} {}
     };
+    using _DereferenceableNodeWithLink = std::pair<_DereferenceableNode, Link>;
 
     class _SearchResult {
         Iterator _iter;
-        _NodeRefs _node_refs;
+        union {
+            _LinkRefs _link_refs;
+        };
         bool _found;
 
     public:
-        explicit _SearchResult(Iterator iter)
-            : _iter{iter}, _node_refs{}, _found{true} {}
+        explicit _SearchResult(Iterator iter) : _iter{iter}, _found{true} {}
 
-        explicit _SearchResult(Iterator iter, _NodeRefs &&node_refs)
-            : _iter{iter}, _node_refs{std::move(node_refs)}, _found{false} {}
+        explicit _SearchResult(Iterator iter, _LinkRefs link_refs)
+            : _iter{iter}, _link_refs{link_refs}, _found{false} {}
 
         template <typename F, typename G>
         auto match(F &&found, G &&missing) const {
             return _found
                 ? std::forward<F>(found)(_iter)
-                : std::forward<G>(missing)(_iter, _node_refs.rbegin());
+                : std::forward<G>(missing)(_iter, _link_refs.begin());
         }
     };
 
     Node _sentinel;
-    std::size_t _size;
+    union {
+        // _sentinel will assume it constructs these links.
+        std::array<Link, _MAX_HEIGHT> _links;
+    };
+    DefaultOnMove<std::size_t> _size;
     std::default_random_engine _random;
     std::geometric_distribution<std::size_t> _height_generator;
 
@@ -339,32 +398,32 @@ private:
     }
 
     _SearchResult _lower_bound(const K &key) {
-        _NodeRefs node_refs;
-        node_refs.reserve(_sentinel.height());
+        _LinkRefs link_refs = map_array([] (auto &x) {
+            return std::ref(x);
+        }, _links);
 
         if (empty() || Iterator {_sentinel.prev()}->first < key) {
-            node_refs.insert(
-                node_refs.end(), _sentinel.height(), std::ref(_sentinel));
-            return _SearchResult {end(), std::move(node_refs)};
+            return _SearchResult {end(), link_refs};
         }
 
-        auto node_ref = std::ref(_sentinel);
         for (auto i = _sentinel.height(); i > 0; --i) {
+            auto &link_ref = link_refs[i - 1];
+            if (i < _sentinel.height()) {
+                link_ref = std::ref((&link_refs[i].get())[-1]);
+            }
             while (true) {
-                auto &next = node_ref.get().links(i - 1).next();
-                Iterator iter = next;
-                if (&next == &_sentinel || key < iter->first) break;
+                Iterator iter{Node::from_link(link_ref.get().next(), i - 1)};
+                if (&link_ref.get().next() == &_links[i - 1] || key < iter->first) break;
                 if (iter->first == key) {
                     return _SearchResult {iter};
                 }
-                node_ref = std::ref(next);
+                link_ref = std::ref(link_ref.get().next());
             }
-            node_refs.push_back(node_ref);
         }
 
-        Iterator begin = &node_ref.get() == &_sentinel
+        Iterator begin = _sentinel.height() == 0 || &link_refs[0].get() == &_links[0]
             ? this->begin()
-            : Iterator {node_refs.back()};
+            : Iterator {Node::from_link(link_refs[0], 0)};
         auto end = this->end();
         auto result = std::find_if_not(begin, end, [&] (auto &value) {
             return value.first < key;
@@ -372,7 +431,7 @@ private:
         if (result != end && result->first == key) {
             return _SearchResult {result};
         }
-        return _SearchResult {result, std::move(node_refs)};
+        return _SearchResult {result, link_refs};
     }
 
     template <typename This>
@@ -383,20 +442,26 @@ private:
             return map.end();
         }
 
-        auto node_ref = std::ref(map._sentinel);
-        for (auto i = map._sentinel.height(); i > 0; --i) {
-            while (true) {
-                auto &next = node_ref.get().links(i - 1).next();
-                Iter iter = next;
-                if (&next == &map._sentinel || key < iter->first) break;
-                if (iter->first == key) {
-                    return iter;
+        Iter begin = map.begin();
+        if (map._sentinel.height() > 0) {
+            auto link_ref = std::ref(map._links[map._sentinel.height() - 1]);
+            for (auto i = map._sentinel.height(); i > 0; --i) {
+                if (i < map._sentinel.height()) {
+                    link_ref = std::ref((&link_ref.get())[-1]);
                 }
-                node_ref = std::ref(next);
+                while (true) {
+                    Iter iter{Node::from_link(link_ref.get().next(), i - 1)};
+                    if (&link_ref.get().next() == &map._links[i - 1] || key < iter->first) break;
+                    if (iter->first == key) {
+                        return iter;
+                    }
+                    link_ref = std::ref(link_ref.get().next());
+                }
+            }
+            if (&link_ref.get() != &map._links[0]) {
+                begin = Iter {Node::from_link(link_ref, 0)};
             }
         }
-        Iter begin = &node_ref.get() == &map._sentinel
-            ? map.begin() : Iter {node_ref};
         auto end = map.end();
         auto result = std::find_if_not(begin, end, [&] (auto &value) {
             return value.first < key;
@@ -414,22 +479,31 @@ private:
         return iter->second;
     }
 
-    template <typename NodeRefIter, typename V>
-    Iterator _insert_before(Iterator iter, NodeRefIter levels, V &&value) {
-        std::size_t height = _height_generator(_random);
+    template <typename V>
+    static auto &_new(V &&value, std::size_t height) {
+        auto size = sizeof(_DereferenceableNode)
+            + offsetof(_DereferenceableNodeWithLink, second)
+            + height * sizeof(Link);
+        auto space = std::make_unique<char[]>(size);
+        auto result = new(space.get()) _DereferenceableNode {std::forward<V>(value), height};
+        space.release();
+        return result->node;
+    }
 
-        auto unique_node = std::make_unique<_DereferenceableNode>(
-            std::forward<V>(value), height);
-        auto node = unique_node.release();
-        assert(node);
-        iter.node().insert_before(*node, _sentinel, levels);
+    template <typename LinkRefIter, typename V>
+    Iterator _insert_before(Iterator iter, LinkRefIter link_iter, V &&value) {
+        auto height = _height_generator(_random);
+
+        auto &node = _new(std::forward<V>(value), height);
+        iter.node().insert_before(node, link_iter);
         ++_size;
-        return *node;
+        _sentinel.height() = std::max(_sentinel.height(), height);
+        return node;
     }
 
     template <typename V>
     auto _insert_at_end(V &&value) {
-        return _insert_before(end(), SentinelIter {_sentinel}, std::forward<V>(value));
+        return _insert_before(end(), _links.begin(), std::forward<V>(value));
     }
 
     template <typename Key>
@@ -438,9 +512,9 @@ private:
                       "Mapped type must be default constructible");
         return _lower_bound(key).match([] (auto iter) {
             return iter;
-        }, [&, this] (auto iter, auto levels) {
+        }, [&, this] (auto iter, auto link_iter) {
             return this->_insert_before(
-                iter, levels,
+                iter, link_iter,
                 std::make_pair(std::forward<Key>(key), M{}));
         })->second;
     }
@@ -449,17 +523,26 @@ private:
     std::pair<Iterator, bool> _insert(V &&value) {
         return _lower_bound(value.first).match([] (auto iter) {
             return std::make_pair(iter, false);
-        }, [&, this] (auto iter, auto levels) {
+        }, [&, this] (auto iter, auto link_iter) {
             return std::make_pair(
-                this->_insert_before(iter, levels, std::forward<V>(value)),
+                this->_insert_before(iter, link_iter, std::forward<V>(value)),
                 true);
         });
     }
 
+    static void _delete(Node &&node) {
+        auto &deref_node = *reinterpret_cast<_DereferenceableNode *>(
+            reinterpret_cast<char *>(&node)
+            - offsetof(_DereferenceableNode, node));
+        deref_node.~_DereferenceableNode();
+        delete[] reinterpret_cast<char *>(&deref_node);
+    }
+
 public:
     Map() :
-        _sentinel{}, _size{},
+        _sentinel{_MAX_HEIGHT}, _size{},
         _random{std::random_device {}()}, _height_generator{} {
+        _sentinel.height() = 0;
     }
 
     Map(const Map &that) : Map{} {
@@ -467,6 +550,8 @@ public:
             _insert_at_end(value);
         }
     }
+
+    Map(Map &&that) = default;
 
     Map(std::initializer_list<ValueType> pairs) : Map{} {
         insert(pairs.begin(), pairs.end());
@@ -481,6 +566,8 @@ public:
         }
         return *this;
     }
+
+    Map &operator=(Map &&that) = default;
 
     ~Map() {
         clear();
@@ -559,12 +646,13 @@ public:
 
     void erase(Iterator iter) {
         auto &node = iter.node();
-        auto height = node.height();
-        delete &node;
-        if (height == _sentinel.height()) {
-            _sentinel.shrink();
+        node.disconnect();
+        if (node.height() == _sentinel.height()) {
+            for (; _sentinel.height() > 0 && _links[_sentinel.height() - 1].empty();
+                --_sentinel.height());
         }
         --_size;
+        _delete(std::move(node));
     }
 
     void erase(const K &key) {
