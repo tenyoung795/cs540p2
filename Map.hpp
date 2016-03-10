@@ -559,10 +559,11 @@ public:
 
     void erase(Iterator iter) {
         auto &node = iter.node();
-        if (node.height() == _sentinel.height()) {
+        auto height = node.height();
+        delete &node;
+        if (height == _sentinel.height()) {
             _sentinel.shrink();
         }
-        delete &node;
         --_size;
     }
 
